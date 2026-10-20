@@ -1,0 +1,69 @@
+---
+sidebar_position: 5
+---
+
+# RAG Source Formats Used in this Project
+
+RAG systems can accept source content in a veriety of formats. In this project, I tested plain text, PDF, HTML and DITA formats.
+
+The sections that follow discuss the known advantages and drawbacks of each of these formats for RAG.
+
+## Plain text
+
+To test plain text as RAG source content, I prepared plain text files containing the relevant content.
+
+Plain text lacks any formatting or semantic structure. This means, for example, that there are no heading formats, list structures, links, code markers, or any markers to indicate content purpose.
+
+Without such indicators, the RAG system has no semantic boundaries that it can use to control where chunks begin and end, and the chunks are made up of lines of undifferentiated plain text. Chunking of the source content may be deficient in areas such as structure, semantic accuracy, coherence and context preservation. This can impair the ability of the RAG system to add good contextualisation to the user’s question. As a result, the LLM may not be able to return an answer of sufficient quality to the user.
+
+On the other hand, if the RAG system is provided with plain text source for items that naturally exist in plain text form, such as readme notes and configuration files, the impairment may not be significant.
+
+Additionally, the simplicity of plain text means that it is not susceptible to noise content being added to the vector database, which can be a significant drawback of PDF and HTML source.
+
+The image below shows a partial view of some of the chunks added to the vector database for plain text source:
+
+![Embedded chunks generated from plain text](/img/plain-text-format.png)
+
+## PDF
+
+PDF is designed to give an appealing visual structure to documents, but the way this is achieved comes at the cost of the file lacking a meaningful underlying structure. The PDF file consists of a sequence of characters containing textual content and presentation data. The textual content occurs on a line-by-line basis, which means that, depending on the structure of a page, the text read by the RAG splitter may not be in readable sequential order. A common situation in which this occurs is when the page has multiple columns. The RAG splitter cannot recognise this, and will create chunks composed of fragments of text arranged out of order.
+
+When PDF content is chunked by a RAG system, the splitter cannot detect semantic boundaries, and it cannot distinguish between actual textual content and the PDF’s other information. As a result, chunks lack any structure and can include extraneous text that has no useful meaning. This is particularly problematic with PDF table structures, as the RAG system cannot interpret these as tables, and instead it chunks the table content as sequences of consecutive characters. 
+
+PDFs can also include hidden layers containing additional text, as well as overlapping text from revisions, and text in form fields. These can add additional noise to chunks, reducing further the meaningful and coherent content in each chunk.
+
+These issues impair the RAG system’s ability to find meaningful similarities between chunks and the user’s question, which means that the LLM may receive a question that has not been properly contextualised.
+
+PDF is widely considered to be far less suitable format for RAG source content than any of the other formats tested as part of this investigation.
+
+Below is a partial view of some of the chunks generated from the PDF source used in this project. You can see examples here of a broken semantic boundary, extraneous text, and text embedded out of order.
+
+![Embedded chunks generated from PDF](/img/pdf-format.png)
+ 
+## HTML
+
+Because of its well-defined formatting tags and clear structuring, HTML is generally considered to be a much better RAG source format than plain text or PDF. It has tags for semantically meaningful elements such as headings, lists, links, tables and code blocks, which can be readily converted into Markdown content optimised for splitting into chunks (although Markdown’s limitations mean that complex tables are problematic). Inline formatting is also preserved. The splitter can easily recognise semantic boundaries, and it preserves the content structure when it creates chunks. 
+
+The splitter used in this project can remove some “noise” content, such as ```<script>```, ```<style>```, ```<nav>```, ```<footer>``` and ```<header>``` tags. However, HTML5 semantic tags are not converted into semantically meaningful Markdown elements. So, for example, the contents of a HTML ```<aside class="warning">``` element is rendered in Markdown simply as plain text. HTML class and id attributes in general are lost in the conversion, eliminating any semantic value that they might have.
+
+Another important drawback of the HTML-based RAG system tested in this project is its inability to distinguish sidebar content and ```<form>``` content from the main content. In fact, because these extraneous elements are chunked for every HTML file, the vector database contains about twice as many chunks as the vector databases of the other source formats. The additional vectors are associated almost exclusively with noise content. Some examples can be seen in the image below.
+ 
+![Embedded chunks generated from HTML](/img/html-format.png)
+
+## DITA
+
+The Darwin Information Typing Architecture (DITA) is an XML-based standard for structured technical documentation. It facilitates the topic-based approach to technical writing, in which small, focused, reusable elements of content exist as individual topic files of ```<task>```, ```<concept>``` or ```<reference>``` type. Within these, pieces of content are contained within semantically meaningful tags that reflect their meaning and purpose, such as ```<prereq>```, ```<steps>```, ```<step>```, ```<cmd>```, and so on.
+
+DITA is an example of structured content because its structure is semantically meaningful. Other modern examples of such systems are Semantic HTML5, AsciiDoc and MDX. 
+
+By contrast, the type of HTML used in this project is sometimes referred to as semi-structured content, largely because its tags focus on presentation rather than strictly on semantic meaning. 
+
+Plain text and PDF are referred to as unstructured content.
+
+Structured content is generally regarded as far preferable for RAG systems compared to other source formats, including HTML.
+
+The Markdown conversion from DITA preserves the structure and semantics the DITA content, which means the embedding model can understand the document structure and far more effectively chunk the content in line with the semantic meaning. Because DITA is not concerned with presentation, there is none of the noise content that can impair a HTML-based RAG system
+
+The difference in quality of the chunking shown below is immediately obvious compared to PDF and HTML. Each chunk is a complete semantic unit, such as a complete procedure or set of concepts.
+ 
+![Embedded chunks generated from DITA](/img/dita-format.png)

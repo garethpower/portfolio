@@ -1,0 +1,42 @@
+---
+sidebar_position: 2
+---
+
+# Creating the Custom Chatbot
+
+With the help of *Claude 4.5 Sonnet*, I created a [Python script](chatbot-code.mdx) for a custom chatbot that uses:
+* the **all-MiniLM-L6-v2** embedding model to convert chunked content into 384-dimensional vectors
+* a local instance of the **mistral-7b-instruct-v0.2.Q4_K_M** LLM for generating answers
+
+My focus in the project is on RAG source formats, so I concluded that the model choice was not of high importance if the models used were solid generic choices for prototyping purposes. 
+
+I chose **ChromaDB** for the vector database because of its popularity and simplicity.
+
+In each new chatbot session, the chatbot prompts the user to specify the format of the source content they want the RAG system to ingest and vectorise. The options are:
+* Plain text
+* PDF
+* HTML
+* DITA (Darwin Information Typing Architecture)
+
+The script can handle each of these choices, chunking the content and populating the vector database.
+
+The user is also offered “advanced settings” options where they can specify chunk and overlap size. The defaults are chunks of 1000 characters and overlaps of 20%. (Overlapping content between chunks is desirable because it helps to prevent context loss at chunk boundaries and to maintain chunk retrieval accuracy.)
+
+![Config options offered when starting the chatbot](/img/chatbot-terminal.png)
+
+To test the various RAG configurations, I found it useful to add a batch mode to the script. This meant I could provide the chatbot with a plain text file containing all the questions I wanted to be asked. The LLM answers all the questions in a single bulk process.
+
+Batch mode also gives the user the ability to select a variety of chunk sizes and overlap sizes to test. For this project, I chose the simplest selection: three different configurations, with chunk sizes of 500 characters, 1000 characters, and 2000 characters, with an overlap size of 20% in each case.
+
+The script keeps a log of each session, recording its answers and response times. 
+
+Aside from chunk size and overlap, I did not vary any other parameters:
+* temperature = 0.1
+* context length (maximum allowed number of tokens in the input + output of a single request) = 2048 tokens
+
+My question / answer template was extremely simple:
+
+![Question/Answer template](/img/template.png)
+ 
+In another situation it might have been desirable to instruct the LLM to state that it didn’t know the answer to a question if it did not have the required information, but I found it preferable to allow it to be wrong, as this provided me with some insight into the RAG system’s workings.
+

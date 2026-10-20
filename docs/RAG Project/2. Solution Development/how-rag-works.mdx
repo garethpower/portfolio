@@ -1,0 +1,38 @@
+---
+sidebar_position: 1
+---
+
+# How RAG Works
+
+A RAG system makes use of two language models:
+* **Embedding model**: This model has two purposes: 
+    * It converts the custom chatbot’s specialised knowledge into vectors, which are stored in a vector database.
+    * It converts the user’s question to a vector so that it can be compared to the vectors in the database.
+* **LLM**: This model receives the user’s question, contextualised with additional information drawn from the vector database, and returns an answer based on the question plus the additional context. 
+
+The RAG system’s operation has two main phases:
+* Indexing phase (initial setup)
+* Query phase (when users ask questions)
+
+## Indexing Phase
+This is the initial setup phase, in which the RAG system converts the specialised knowledge into a vector database so that it is ready for use to contextualise questions for the chatbot.
+
+The RAG system used in this project carries out the indexing phase as follows:
+1.	The RAG system fetches the specialised content you want users to be able to ask about.
+2.	If the format of the source content is PDF, it is converted into plain text. If the source format is plain text, no conversion is necessary. If the source is HTML or DITA, it is converted into Markdown.
+3.	The system splits the content into “chunks” to facilitate retrieval of the right contextual information when a user asks a question.
+4.	The RAG system’s embedding model converts these chunks into vectors (multi-dimensional numerical values).
+5.	It stores these in a vector database.
+
+![RAG indexing phase flow diagram](/img/rag-indexing.png)
+ 
+## Query Phase
+This is the phase in which users ask the chatbot questions.
+1.	The embedding model converts the user’s question to vectors.
+2.	The RAG system searches for similar vectors in the vector database (using cosine similarity).
+3.	It retrieves the most contextually relevant chunks based on similarity. Similar vectors imply similar semantic meaning. In this project, the RAG system retrieves the top five most similar chunks.
+4.	It combines these chunks with the user’s question to provide additional context.
+5.	It queries the LLM with this contextualised question.
+6.	The LLM returns its answer to the user, including source attribution so that the user knows where it got its information from.
+ 
+![RAG querying phase flow diagram](/img/rag-querying.png)

@@ -1,0 +1,3278 @@
+---
+sidebar_position: 3
+---
+
+# RAG Chatbot Python Script
+
+I used Claude 4.5 Sonnet to generate the chatbot Python script used in this project.
+
+The script evolved gradually over time. Initially my intention was to generate just a simple, bare-bones script, but as the project proceeded, I realised I needed extra capabilities – logging, configurability, batch mode – so the script expanded and became quite complex. It also became somewhat untidy because the AI sometimes overdelivered on what I was asking for, such as the large number of configuration options that I didn’t really need. However, I did not feel it was worth my time to address this as it was not central to what I was trying to achieve. The chatbot script is for testing purposes only and was never intended to be a user-friendly utility.
+
+The script has quite a few dependencies, and the LLM runs locally, so it takes some effort to get this running, and then a typical response time for any query (on my laptop) is about 2-3 minutes.
+
+```python
+"""
+================================================================================
+INTERACTIVE MULTI-FORMAT RAG CHATBOT 
+================================================================================
+
+"""
+
+# ============================================================================
+# SECTION 1: IMPORTS
+# ============================================================================
+
+import os
+import sys
+import time
+import logging
+import hashlib
+import json
+import re
+import platform
+import shutil
+import gc
+from datetime import datetime
+from typing import List, Dict, Optional, Union, Tuple, Set
+from pathlib import Path
+from enum import Enum
+import warnings
+warnings.filterwarnings('ignore')
+
+# === Check for required libraries ===
+try:
+    import PyPDF2
+    import pdfplumber
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    print("⚠️ PDF support not available. Install: pip install PyPDF2 pdfplumber")
+
+try:
+    from bs4 import BeautifulSoup
+    import html2text
+    HTML_SUPPORT = True
+except ImportError:
+    HTML_SUPPORT = False
+    print("⚠️ HTML support not available. Install: pip install beautifulsoup4 html2text")
+
+try:
+    import xml.etree.ElementTree as ET
+    DITA_SUPPORT = True
+except ImportError:
+    DITA_SUPPORT = False
+
+# === LangChain imports ===
+try:
+    from langchain_core.documents import Document
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.runnables import RunnablePassthrough
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_chroma import Chroma
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.llms import CTransformers
+except ImportError as e:
+    print("\n❌ Error: Missing required LangChain packages!")
+    print(f"Details: {e}")
+    print("\nInstall with:")
+    print("pip install langchain-core langchain-community langchain-chroma")
+    print("pip install langchain-text-splitters ctransformers sentence-transformers")
+    sys.exit(1)
+
+
+# ============================================================================
+# SECTION 2: LOGGING CONFIGURATION
+# ============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('chatbot.log')
+    ]
+)
+
+logger = logging.getLogger('InteractiveChatbot')
+
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('huggingface_hub').setLevel(logging.WARNING)
+logging.getLogger('chromadb').setLevel(logging.WARNING)
+
+
+# ============================================================================
+# SECTION 3: DOCUMENT FORMAT ENUMERATION
+# ============================================================================
+
+class DocumentFormat(Enum):
+    """Supported document formats."""
+    PLAIN_TEXT = "txt"
+    PDF = "pdf"
+    HTML = "html"
+    DITA = "dita"
+    
+    @classmethod
+    def from_extension(cls, extension: str) -> Optional['DocumentFormat']:
+        extension = extension.lstrip('.').lower()
+        extension_map = {
+            'txt': cls.PLAIN_TEXT, 'text': cls.PLAIN_TEXT,
+            'pdf': cls.PDF,
+            'html': cls.HTML, 'htm': cls.HTML,
+            'dita': cls.DITA, 'ditamap': cls.DITA,
+        }
+        return extension_map.get(extension)
+    
+    def get_extensions(self) -> List[str]:
+        if self == DocumentFormat.PLAIN_TEXT: return ['.txt', '.text']
+        elif self == DocumentFormat.PDF: return ['.pdf']
+        elif self == DocumentFormat.HTML: return ['.html', '.htm']
+        elif self == DocumentFormat.DITA: return ['.dita', '.ditamap']
+        return []
+    
+    def get_description(self) -> str:
+        descriptions = {
+            DocumentFormat.PLAIN_TEXT: "Plain text files",
+            DocumentFormat.PDF: "PDF documents",
+            DocumentFormat.HTML: "HTML web pages",
+            DocumentFormat.DITA: "DITA XML topics"
+        }
+        return descriptions.get(self, "Unknown format")
+    
+    def is_available(self) -> bool:
+        if self == DocumentFormat.PLAIN_TEXT: return True
+        elif self == DocumentFormat.PDF: return PDF_SUPPORT
+        elif self == DocumentFormat.HTML: return HTML_SUPPORT
+        elif self == DocumentFormat.DITA: return DITA_SUPPORT
+        return False
+    
+    def __str__(self):
+        return self.value.upper()
+
+
+# ============================================================================
+# SECTION 4: SESSION LOGGER
+# ============================================================================
+
+class SessionLogger:
+    """Session logger with complete configuration tracking."""
+    
+    def __init__(self, config: 'UserConfiguration', logs_dir: str = "./logs"):
+        self.logs_dir = Path(logs_dir)
+        self.logs_dir.mkdir(exist_ok=True)
+        
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.session_start = datetime.now()
+        self.config = config
+        
+        self.text_log_path = self.logs_dir / f"session_{self.session_id}.log"
+        self.json_log_path = self.logs_dir / f"session_{self.session_id}.json"
+        
+        self.queries = []
+        self.query_count = 0
+        self.document_stats = {}
+        self.system_info = self._collect_system_info()
+        
+        self._initialize_text_log()
+        logger.info(f"📝 Session log: {self.text_log_path}")
+    
+    def _collect_system_info(self) -> Dict:
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            memory_total_gb = memory.total / (1024**3)
+            memory_available_gb = memory.available / (1024**3)
+        except:
+            memory_total_gb = "Unknown"
+            memory_available_gb = "Unknown"
+        
+        return {
+            'python_version': sys.version.split()[0],
+            'platform': platform.platform(),
+            'os': platform.system(),
+            'os_version': platform.version(),
+            'architecture': platform.machine(),
+            'processor': platform.processor() or "Unknown",
+            'cpu_count': os.cpu_count() or "Unknown",
+            'memory_total_gb': f"{memory_total_gb:.2f}" if isinstance(memory_total_gb, float) else memory_total_gb,
+            'memory_available_gb': f"{memory_available_gb:.2f}" if isinstance(memory_available_gb, float) else memory_available_gb,
+        }
+    
+    def _initialize_text_log(self):
+        separator = "=" * 80
+        dash_separator = "-" * 80
+        
+        with open(self.text_log_path, 'w', encoding='utf-8') as f:
+            f.write(separator + "\n")
+            f.write("CHAT SESSION LOG\n")
+            f.write(separator + "\n\n")
+            
+            f.write("SESSION INFORMATION\n")
+            f.write(dash_separator + "\n")
+            f.write(f"Session ID:    {self.session_id}\n")
+            f.write(f"Started:       {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Log Version:   3.5 (On-Demand Export + Chunk Display + Full Chunks in Log)\n\n")
+            
+            f.write("SYSTEM INFORMATION\n")
+            f.write(dash_separator + "\n")
+            f.write(f"Platform:      {self.system_info['platform']}\n")
+            f.write(f"OS:            {self.system_info['os']}\n")
+            f.write(f"CPU Cores:     {self.system_info['cpu_count']}\n")
+            f.write(f"Total RAM:     {self.system_info['memory_total_gb']} GB\n")
+            f.write(f"Python:        {self.system_info['python_version']}\n\n")
+            
+            f.write("CONFIGURATION SETTINGS\n")
+            f.write(dash_separator + "\n")
+            f.write(f"Documents Folder:   {self.config.documents_folder}\n")
+            f.write(f"Selected Formats:   {', '.join(str(fmt) for fmt in sorted(self.config.selected_formats, key=str))}\n\n")
+            f.write(f"Chunk Size:         {self.config.chunk_size} characters\n")
+            f.write(f"Chunk Overlap:      {self.config.chunk_overlap} characters\n")
+            if self.config.chunk_size > 0:
+                f.write(f"Overlap Ratio:      {(self.config.chunk_overlap / self.config.chunk_size * 100):.1f}%\n")
+            f.write("\n")
+            f.write(f"Embedding Model:    {self.config.embedding_model}\n")
+            f.write(f"Language Model:     {os.path.basename(self.config.model_path)}\n")
+            f.write(f"Vector Database:    {self.config.persist_directory}\n\n")
+            
+            f.write("MODEL PARAMETERS\n")
+            f.write(dash_separator + "\n")
+            f.write("(Will be populated after initialization)\n\n")
+            
+            f.write("DOCUMENT STATISTICS\n")
+            f.write(dash_separator + "\n")
+            f.write("(Will be populated after document loading)\n\n")
+            
+            f.write(separator + "\n")
+            f.write("QUERY LOG\n")
+            f.write(separator + "\n\n")
+    
+    def set_document_stats(self, stats: Dict):
+        self.document_stats = stats
+        with open(self.text_log_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        replacement = ""
+        for fmt_str, stat in stats.items():
+            if stat['count'] > 0:
+                replacement += f"{fmt_str}:\n"
+                replacement += f"  Files found:         {stat['count']}\n"
+                replacement += f"  Successfully loaded: {stat['success']}\n"
+                replacement += f"  Failed:              {stat['failed']}\n"
+        
+        total_success = sum(s['success'] for s in stats.values())
+        total_files = sum(s['count'] for s in stats.values())
+        replacement += f"\nTotal: {total_success}/{total_files} files loaded\n"
+        
+        dash_separator = "-" * 80
+        content = content.replace(
+            f"DOCUMENT STATISTICS\n{dash_separator}\n(Will be populated after document loading)\n",
+            f"DOCUMENT STATISTICS\n{dash_separator}\n{replacement}"
+        )
+        
+        with open(self.text_log_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    
+    def set_model_params(self, llm_config: Dict, retriever_config: Dict):
+        with open(self.text_log_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        replacement = ""
+        replacement += "LLM Generation Settings:\n"
+        replacement += f"  Max tokens:       {llm_config.get('max_new_tokens', 'Unknown')}\n"
+        replacement += f"  Temperature:      {llm_config.get('temperature', 'Unknown')}\n"
+        replacement += f"  Context length:   {llm_config.get('context_length', 'Unknown')}\n\n"
+        replacement += "Retrieval Settings:\n"
+        replacement += f"  Search type:      {retriever_config.get('search_type', 'Unknown')}\n"
+        replacement += f"  Top K results:    {retriever_config.get('k', 'Unknown')}\n\n"
+        
+        dash_separator = "-" * 80
+        content = content.replace(
+            f"MODEL PARAMETERS\n{dash_separator}\n(Will be populated after initialization)\n",
+            f"MODEL PARAMETERS\n{dash_separator}\n{replacement}"
+        )
+        
+        with open(self.text_log_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    
+    def log_query(self, question: str, answer: str, response_time: float, 
+                sources: List[Document] = None, from_cache: bool = False):
+        self.query_count += 1
+        timestamp = datetime.now()
+        
+        source_info = []
+        source_chunks = []  # ADD THIS LINE
+        format_distribution = {}
+        
+        if sources:
+            for doc in sources[:5]:
+                filename = doc.metadata.get('filename', 'Unknown')
+                fmt = doc.metadata.get('format', 'unknown')
+                page = doc.metadata.get('page_number')
+                
+                format_distribution[fmt] = format_distribution.get(fmt, 0) + 1
+                
+                source_str = f"{filename} [{fmt}]"
+                if page:
+                    source_str += f" (page {page})"
+                source_info.append(source_str)
+                
+                # ADD THESE LINES - Store chunk content
+                source_chunks.append({
+                    'filename': filename,
+                    'format': fmt,
+                    'page': page,
+                    'chunk_text': doc.page_content
+                })
+        
+        query_record = {
+            'query_number': self.query_count,
+            'timestamp': timestamp.isoformat(),
+            'question': question,
+            'answer': answer,
+            'response_time': response_time,
+            'from_cache': from_cache,
+            'sources': source_info,
+            'source_chunks': source_chunks,  # ADD THIS LINE
+            'source_count': len(sources) if sources else 0,
+            'format_distribution': format_distribution
+        }
+        
+        self.queries.append(query_record)
+        self._write_text_log(query_record, timestamp)
+        self._write_json_log()
+    
+    def _write_text_log(self, record: Dict, timestamp: datetime):
+        dash_separator = "-" * 80
+        chunk_separator = "." * 80  # ADD THIS LINE
+        
+        with open(self.text_log_path, 'a', encoding='utf-8') as f:
+            f.write(dash_separator + "\n")
+            f.write(f"[Q{record['query_number']}] {timestamp.strftime('%H:%M:%S')} | User asked:\n")
+            f.write(f"{record['question']}\n\n")
+            
+            cache_note = " [FROM CACHE]" if record['from_cache'] else ""
+            f.write(f"[A{record['query_number']}] {timestamp.strftime('%H:%M:%S')} | ")
+            f.write(f"Bot answered ({record['response_time']:.2f}s){cache_note}:\n")
+            f.write(f"{record['answer']}\n\n")
+            
+            if record['sources']:
+                f.write(f"Sources used ({record['source_count']}):\n")
+                for source in record['sources']:
+                    f.write(f"  - {source}\n")
+                if record['format_distribution']:
+                    f.write("\nFormat distribution: ")
+                    f.write(", ".join(f"{fmt}: {count}" for fmt, count in record['format_distribution'].items()))
+                    f.write("\n")
+                
+                # ADD THIS SECTION - Write chunk content
+                if record.get('source_chunks'):
+                    f.write("\n" + chunk_separator + "\n")
+                    f.write("CHUNK CONTENT USED FOR THIS ANSWER:\n")
+                    f.write(chunk_separator + "\n\n")
+                    
+                    for i, chunk_info in enumerate(record['source_chunks'], 1):
+                        f.write(f"[CHUNK {i}] {chunk_info['filename']} [{chunk_info['format'].upper()}]")
+                        if chunk_info.get('page'):
+                            f.write(f" (page {chunk_info['page']})")
+                        f.write("\n")
+                        f.write("-" * 80 + "\n")
+                        f.write(chunk_info['chunk_text'])
+                        f.write("\n" + "-" * 80 + "\n\n")
+                    
+                    f.write(chunk_separator + "\n")
+                
+                f.write("\n")
+            f.write("\n")
+    
+    def _write_json_log(self):
+        session_data = {
+            'session_id': self.session_id,
+            'started': self.session_start.isoformat(),
+            'ended': datetime.now().isoformat(),
+            'system': self.system_info,
+            'configuration': {
+                'documents_folder': self.config.documents_folder,
+                'selected_formats': [fmt.value for fmt in self.config.selected_formats],
+                'chunk_size': self.config.chunk_size,
+                'chunk_overlap': self.config.chunk_overlap,
+                'embedding_model': self.config.embedding_model,
+                'llm_model_path': self.config.model_path,
+            },
+            'document_statistics': self.document_stats,
+            'total_queries': self.query_count,
+            'queries': self.queries,
+            'statistics': self._get_statistics()
+        }
+        
+        with open(self.json_log_path, 'w', encoding='utf-8') as f:
+            json.dump(session_data, f, indent=2, ensure_ascii=False)
+    
+    def _get_statistics(self) -> Dict:
+        if not self.queries:
+            return {}
+        
+        response_times = [q['response_time'] for q in self.queries]
+        cache_hits = sum(1 for q in self.queries if q['from_cache'])
+        
+        all_formats = {}
+        for q in self.queries:
+            for fmt, count in q.get('format_distribution', {}).items():
+                all_formats[fmt] = all_formats.get(fmt, 0) + count
+        
+        return {
+            'total_queries': len(self.queries),
+            'avg_response_time': sum(response_times) / len(response_times),
+            'min_response_time': min(response_times),
+            'max_response_time': max(response_times),
+            'cache_hits': cache_hits,
+            'cache_misses': len(self.queries) - cache_hits,
+            'avg_sources_used': sum(q['source_count'] for q in self.queries) / len(self.queries),
+            'total_sources_used': sum(q['source_count'] for q in self.queries),
+            'format_usage': all_formats
+        }
+    
+    def finalize(self):
+        session_end = datetime.now()
+        duration = session_end - self.session_start
+        stats = self._get_statistics()
+        
+        separator = "=" * 80
+        
+        with open(self.text_log_path, 'a', encoding='utf-8') as f:
+            f.write(separator + "\n")
+            f.write("SESSION SUMMARY\n")
+            f.write(separator + "\n")
+            f.write(f"Session ended:        {session_end.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Duration:             {duration}\n")
+            f.write(f"Total queries:        {stats.get('total_queries', 0)}\n")
+            
+            if stats.get('total_queries', 0) > 0:
+                f.write("\nPerformance:\n")
+                f.write(f"  Avg response time:  {stats['avg_response_time']:.2f}s\n")
+                f.write(f"  Fastest response:   {stats['min_response_time']:.2f}s\n")
+                f.write(f"  Slowest response:   {stats['max_response_time']:.2f}s\n")
+            
+            f.write(separator + "\n")
+        
+        self._write_json_log()
+    
+    def get_log_path(self) -> str:
+        return str(self.text_log_path)
+    
+    def get_json_path(self) -> str:
+        return str(self.json_log_path)
+
+
+# ============================================================================
+# SECTION 5: BATCH QUERY RUNNER
+# ============================================================================
+
+class BatchQueryRunner:
+    """Run multiple queries in batch mode."""
+    
+    def __init__(self, chatbot: 'InteractiveChatbot'):
+        self.chatbot = chatbot
+        self.results = []
+    
+    def run_from_file(self, questions_file: str, output_file: str = None):
+        """Run batch queries from file."""
+        separator = "=" * 70
+        dash_separator = "-" * 70
+        
+        print()
+        print(separator)
+        print("🚀 BATCH QUERY MODE")
+        print(separator)
+        print(f"Loading questions from: {questions_file}\n")
+        
+        questions = self._load_questions(questions_file)
+        
+        if not questions:
+            print("❌ No questions found!")
+            return
+        
+        print(f"📝 Found {len(questions)} question(s)\n")
+        
+        self.results = []
+        total_start = time.time()
+        
+        for i, question in enumerate(questions, 1):
+            print(dash_separator)
+            print(f"[Q{i}/{len(questions)}] {question['text']}")
+            
+            if question.get('category'):
+                print(f"Category: {question['category']}")
+            print()
+            
+            start_time = time.time()
+            response = self.chatbot.query(question['text'])
+            elapsed = time.time() - start_time
+            
+            if "error" in response:
+                print(f"❌ Error: {response['error']}\n")
+                result = {
+                    'question': question['text'],
+                    'category': question.get('category', 'uncategorized'),
+                    'error': response['error'],
+                    'response_time': elapsed
+                }
+            else:
+                print("🤖 Answer:")
+                answer_preview = response['answer'][:200]
+                print(f"{answer_preview}{'...' if len(response['answer']) > 200 else ''}\n")
+                print(f"⏱️ Time: {response['response_time']:.2f}s")
+                print(f"📚 Sources: {len(response.get('sources', []))}")
+                
+                if response.get('sources'):
+                    formats = {}
+                    for doc in response['sources']:
+                        fmt = doc.metadata.get('format', 'unknown')
+                        formats[fmt] = formats.get(fmt, 0) + 1
+                    print(f"📊 Formats: {formats}")
+                
+                print()
+                
+                result = {
+                    'question': question['text'],
+                    'category': question.get('category', 'uncategorized'),
+                    'answer': response['answer'],
+                    'response_time': response['response_time'],
+                    'source_count': len(response.get('sources', [])),
+                    'sources': [
+                        {
+                            'filename': doc.metadata.get('filename'),
+                            'format': doc.metadata.get('format'),
+                            'page': doc.metadata.get('page_number')
+                        }
+                        for doc in response.get('sources', [])[:5]
+                    ]
+                }
+            
+            self.results.append(result)
+        
+        total_elapsed = time.time() - total_start
+        
+        self._print_summary(total_elapsed)
+        
+        if not output_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f"batch_results_{timestamp}.json"
+        
+        self._save_results(output_file)
+    
+    def _load_questions(self, filepath: str) -> List[Dict]:
+        """Load questions from file."""
+        path = Path(filepath)
+        
+        if not path.exists():
+            print(f"❌ File not found: {filepath}")
+            return []
+        
+        questions = []
+        
+        if filepath.endswith('.json'):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                if isinstance(data, dict):
+                    for category, qs in data.items():
+                        for q in qs:
+                            questions.append({'text': q, 'category': category})
+                elif isinstance(data, list):
+                    for q in data:
+                        if isinstance(q, str):
+                            questions.append({'text': q, 'category': 'uncategorized'})
+                        elif isinstance(q, dict):
+                            questions.append(q)
+                return questions
+            except json.JSONDecodeError:
+                print("⚠️ Invalid JSON, trying as text...")
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        questions.append({'text': line, 'category': 'uncategorized'})
+            return questions
+        except Exception as e:
+            print(f"❌ Error reading file: {e}")
+            return []
+    
+    def _print_summary(self, total_time: float):
+        """Print batch execution summary."""
+        separator = "=" * 70
+        
+        print(separator)
+        print("📊 BATCH EXECUTION SUMMARY")
+        print(separator)
+        
+        if not self.results:
+            return
+        
+        total = len(self.results)
+        successful = sum(1 for r in self.results if 'answer' in r)
+        failed = total - successful
+        
+        print(f"\nTotal questions: {total}")
+        print(f"Successful: {successful}")
+        print(f"Failed: {failed}")
+        print(f"Total time: {total_time:.2f}s")
+        
+        if successful > 0:
+            response_times = [r['response_time'] for r in self.results if 'answer' in r]
+            avg_time = sum(response_times) / len(response_times)
+            
+            print("\nPerformance:")
+            print(f"  Average time: {avg_time:.2f}s")
+            print(f"  Fastest: {min(response_times):.2f}s")
+            print(f"  Slowest: {max(response_times):.2f}s")
+            
+            categories = {}
+            for r in self.results:
+                cat = r.get('category', 'uncategorized')
+                if cat not in categories:
+                    categories[cat] = {'count': 0, 'total_time': 0}
+                categories[cat]['count'] += 1
+                categories[cat]['total_time'] += r.get('response_time', 0)
+            
+            if len(categories) > 1:
+                print("\nBy category:")
+                for cat, stats in categories.items():
+                    avg = stats['total_time'] / stats['count']
+                    print(f"  {cat}: {stats['count']} questions, avg {avg:.2f}s")
+            
+            total_sources = sum(r.get('source_count', 0) for r in self.results if 'answer' in r)
+            print("\nRetrieval:")
+            print(f"  Total sources: {total_sources}")
+            print(f"  Avg per question: {total_sources / successful:.1f}")
+        
+        print(separator)
+    
+    def _save_results(self, output_file: str):
+        """Save results to file."""
+        try:
+            output_data = {
+                'metadata': {
+                    'timestamp': datetime.now().isoformat(),
+                    'total_questions': len(self.results),
+                    'configuration': {
+                        'chunk_size': self.chatbot.config.chunk_size,
+                        'chunk_overlap': self.chatbot.config.chunk_overlap,
+                        'embedding_model': self.chatbot.config.embedding_model,
+                        'llm_model': os.path.basename(self.chatbot.config.model_path),
+                    }
+                },
+                'results': self.results,
+                'summary': self._generate_summary_dict()
+            }
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(output_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"\n✅ Results saved to: {output_file}")
+            
+            text_file = Path(output_file).with_suffix('.txt')
+            self._save_text_report(text_file)
+            print(f"✅ Text report saved to: {text_file}")
+            
+        except Exception as e:
+            print(f"❌ Error saving results: {e}")
+    
+    def _save_text_report(self, output_file: Path):
+        """Save human-readable text report."""
+        separator = "=" * 80
+        dash_separator = "-" * 80
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(separator + "\n")
+            f.write("BATCH QUERY RESULTS\n")
+            f.write(separator + "\n\n")
+            
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("Configuration:\n")
+            f.write(f"  Chunk size: {self.chatbot.config.chunk_size}\n")
+            f.write(f"  Chunk overlap: {self.chatbot.config.chunk_overlap}\n\n")
+            f.write(separator + "\n\n")
+            
+            for i, result in enumerate(self.results, 1):
+                f.write(dash_separator + "\n")
+                f.write(f"[Q{i}] {result['question']}\n\n")
+                
+                if 'error' in result:
+                    f.write(f"ERROR: {result['error']}\n")
+                else:
+                    f.write(f"Answer:\n{result['answer']}\n\n")
+                    f.write(f"Time: {result['response_time']:.2f}s\n")
+                    f.write(f"Sources: {result['source_count']}\n")
+                
+                f.write("\n")
+    
+    def _generate_summary_dict(self) -> Dict:
+        """Generate summary statistics."""
+        if not self.results:
+            return {}
+        
+        successful = [r for r in self.results if 'answer' in r]
+        
+        summary = {
+            'total_questions': len(self.results),
+            'successful': len(successful),
+            'failed': len(self.results) - len(successful),
+        }
+        
+        if successful:
+            response_times = [r['response_time'] for r in successful]
+            summary['avg_response_time'] = sum(response_times) / len(response_times)
+            summary['min_response_time'] = min(response_times)
+            summary['max_response_time'] = max(response_times)
+            
+            total_sources = sum(r.get('source_count', 0) for r in successful)
+            summary['avg_sources_per_question'] = total_sources / len(successful)
+        
+        return summary
+
+
+# ============================================================================
+# SECTION 6: CONFIGURATION COMPARISON
+# ============================================================================
+
+class ConfigurationComparison:
+    """Compare different chunk configurations with proper database isolation."""
+    
+    def __init__(self, base_config: 'UserConfiguration'):
+        self.base_config = base_config
+        self.results = {}
+    
+    def run_comparison(self, questions_file: str, configs: List[Dict] = None, 
+                      test_mode: str = "comprehensive"):
+        """Run comparison with multiple configurations."""
+        if configs is None:
+            configs = self._get_predefined_configs(test_mode)
+        
+        separator = "=" * 70
+        dash_separator = "-" * 70
+        
+        print()
+        print(separator)
+        print("🔬 CONFIGURATION COMPARISON MODE")
+        print(separator)
+        print(f"Test mode: {test_mode}")
+        print(f"Testing {len(configs)} configuration(s)")
+        print(f"Questions file: {questions_file}")
+        print(separator)
+        print()
+        
+        # Display configurations
+        print("Configurations to test:")
+        print(f"{'#':<4} {'Name':<25} {'Chunk Size':<12} {'Overlap':<10} {'Overlap %':<10}")
+        print(dash_separator)
+        for i, cfg in enumerate(configs, 1):
+            overlap_pct = (cfg['chunk_overlap'] / cfg['chunk_size'] * 100)
+            print(f"{i:<4} {cfg['name']:<25} {cfg['chunk_size']:<12} "
+                  f"{cfg['chunk_overlap']:<10} {overlap_pct:.1f}%")
+        print()
+        
+        if not self._confirm_test(len(configs)):
+            print("Test cancelled.")
+            return
+        
+        # Track databases created
+        databases_created = []
+        
+        # Run tests
+        for i, cfg in enumerate(configs, 1):
+            print()
+            print(separator)
+            print(f"Testing {i}/{len(configs)}: {cfg['name']}")
+            print(f"  Chunk size: {cfg['chunk_size']}")
+            print(f"  Overlap: {cfg['chunk_overlap']} ({cfg['chunk_overlap']/cfg['chunk_size']*100:.1f}%)")
+            print(separator)
+            
+            chatbot = None
+            
+            try:
+                config = self._create_test_config(cfg)
+                
+                # CRITICAL: Use unique database name with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                config_name_safe = cfg['name'].lower().replace(' ', '_').replace('%', 'pct')
+                config.persist_directory = f"./test_db_{config_name_safe}_{timestamp}"
+                
+                print(f"📁 Database: {config.persist_directory}")
+                databases_created.append(config.persist_directory)
+                
+                # Initialize chatbot
+                print("⚙️ Initializing chatbot...")
+                start_init = time.time()
+                chatbot = InteractiveChatbot(config)
+                chatbot.initialize()
+                init_time = time.time() - start_init
+                print(f"✅ Initialization complete ({init_time:.2f}s)")
+                
+                # Run batch queries
+                runner = BatchQueryRunner(chatbot)
+                output_file = f"results_{config_name_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                runner.run_from_file(questions_file, output_file)
+                
+                # Store results
+                summary = runner._generate_summary_dict()
+                summary['initialization_time'] = init_time
+                summary['chunk_size'] = cfg['chunk_size']
+                summary['chunk_overlap'] = cfg['chunk_overlap']
+                summary['overlap_ratio'] = cfg['chunk_overlap'] / cfg['chunk_size']
+                summary['database_path'] = config.persist_directory
+                
+                self.results[cfg['name']] = summary
+                
+                # CRITICAL: Complete cleanup
+                print("🧹 Cleaning up resources...")
+                
+                # Finalize session
+                try:
+                    chatbot.finalize_session()
+                except Exception as e:
+                    logger.debug(f"Session finalize error: {e}")
+                
+                # Close vectorstore
+                if hasattr(chatbot, 'vectorstore') and chatbot.vectorstore is not None:
+                    try:
+                        if hasattr(chatbot.vectorstore, '_client'):
+                            try:
+                                chatbot.vectorstore._client.reset()
+                            except:
+                                pass
+                        del chatbot.vectorstore
+                        chatbot.vectorstore = None
+                    except Exception as e:
+                        logger.debug(f"Vectorstore cleanup error: {e}")
+                
+                # Delete other components
+                for attr in ['embeddings', 'llm', 'retriever']:
+                    if hasattr(chatbot, attr) and getattr(chatbot, attr) is not None:
+                        try:
+                            delattr(chatbot, attr)
+                        except:
+                            pass
+                
+                del chatbot
+                chatbot = None
+                
+                # Force garbage collection
+                print("♻️ Releasing memory...")
+                for _ in range(3):
+                    gc.collect()
+                    time.sleep(0.5)
+                
+                # Try to delete database
+                print("🗑️ Removing test database...")
+                deletion_success = self._safe_delete_directory(config.persist_directory)
+                
+                if deletion_success:
+                    databases_created.remove(config.persist_directory)
+                    print(f"✅ Completed: {cfg['name']} (database cleaned)")
+                else:
+                    print(f"✅ Completed: {cfg['name']} (database cleanup pending)")
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                print(f"\n❌ Error testing {cfg['name']}: {e}")
+                logger.exception(f"Configuration test failed: {cfg['name']}")
+                
+                self.results[cfg['name']] = {
+                    'error': str(e),
+                    'chunk_size': cfg['chunk_size'],
+                    'chunk_overlap': cfg['chunk_overlap']
+                }
+                
+                # Cleanup on error
+                if chatbot is not None:
+                    try:
+                        chatbot.finalize_session()
+                    except:
+                        pass
+                    try:
+                        for attr in ['vectorstore', 'embeddings', 'llm']:
+                            if hasattr(chatbot, attr):
+                                delattr(chatbot, attr)
+                        del chatbot
+                    except:
+                        pass
+                
+                for _ in range(3):
+                    gc.collect()
+                    time.sleep(0.5)
+        
+        # Final cleanup
+        if databases_created:
+            print()
+            print(separator)
+            print("🧹 FINAL DATABASE CLEANUP")
+            print(separator)
+            self._cleanup_databases(databases_created)
+        
+        # Generate reports
+        self._generate_comparison_report()
+        self._generate_detailed_analysis()
+    
+    def _safe_delete_directory(self, path: str, max_attempts: int = 5) -> bool:
+        """Safely delete directory with retry logic."""
+        if not os.path.exists(path):
+            return True
+        
+        for attempt in range(max_attempts):
+            try:
+                gc.collect()
+                time.sleep(1 + attempt * 0.5)
+                
+                shutil.rmtree(path)
+                return True
+                
+            except PermissionError:
+                if attempt < max_attempts - 1:
+                    if platform.system() == 'Windows':
+                        try:
+                            import subprocess
+                            result = subprocess.run(
+                                ['cmd', '/c', 'rmdir', '/s', '/q', path],
+                                check=False,
+                                capture_output=True,
+                                timeout=5
+                            )
+                            if not os.path.exists(path):
+                                return True
+                        except:
+                            pass
+                else:
+                    return False
+            except Exception as e:
+                logger.debug(f"Delete attempt {attempt + 1} failed: {e}")
+                if attempt == max_attempts - 1:
+                    return False
+        
+        return False
+    
+    def _cleanup_databases(self, database_paths: List[str]):
+        """Clean up list of database directories."""
+        if not database_paths:
+            print("   ✓ No databases to clean")
+            return
+        
+        print(f"   Found {len(database_paths)} database(s) to clean")
+        print("   ⏳ Waiting for file handles to release...")
+        gc.collect()
+        time.sleep(3)
+        
+        cleaned = 0
+        failed = []
+        
+        for db_path in database_paths:
+            db_name = Path(db_path).name
+            print(f"   Removing: {db_name}...", end=' ')
+            
+            if self._safe_delete_directory(db_path):
+                print("✓")
+                cleaned += 1
+            else:
+                print("✗")
+                failed.append(db_path)
+        
+        if failed:
+            print(f"\n   🔄 Retrying {len(failed)} failed deletion(s)...")
+            time.sleep(5)
+            gc.collect()
+            
+            for db_path in failed[:]:
+                db_name = Path(db_path).name
+                print(f"   Retry: {db_name}...", end=' ')
+                
+                if self._safe_delete_directory(db_path):
+                    print("✓")
+                    cleaned += 1
+                    failed.remove(db_path)
+                else:
+                    print("✗")
+        
+        remaining = len(database_paths) - cleaned
+        
+        if remaining > 0:
+            print(f"\n   ⚠️ {remaining} database(s) could not be deleted:")
+            for db_path in failed:
+                print(f"      • {Path(db_path).name}")
+            print("   ℹ️ Run 'cleanup' command after closing chatbot to remove them")
+        else:
+            print(f"\n   ✅ All {cleaned} test database(s) cleaned successfully")
+    
+    def cleanup_old_databases(self):
+        """Clean up old databases from previous runs."""
+        print("\n🧹 Checking for old databases to clean up...")
+        
+        current_dir = Path(".")
+        old_dbs = list(current_dir.glob("chroma_db_*_old_*"))
+        test_dbs = list(current_dir.glob("test_db_*"))
+        
+        all_dbs = old_dbs + test_dbs
+        
+        if not all_dbs:
+            print("   ✓ No old databases found")
+            return
+        
+        print(f"   Found {len(all_dbs)} old database(s)")
+        db_paths = [str(db) for db in all_dbs]
+        self._cleanup_databases(db_paths)
+    
+    def _get_predefined_configs(self, test_mode: str) -> List[Dict]:
+        """Get predefined configuration sets."""
+        
+        if test_mode == "quick":
+            return [
+                {"name": "Small_20pct", "chunk_size": 500, "chunk_overlap": 100},
+                {"name": "Medium_20pct", "chunk_size": 1000, "chunk_overlap": 200},
+                {"name": "Large_20pct", "chunk_size": 2000, "chunk_overlap": 400},
+            ]
+        
+        elif test_mode == "comprehensive":
+            configs = []
+            sizes = [500, 1000, 1500, 2000, 2500]
+            for size in sizes:
+                overlap = int(size * 0.2)
+                configs.append({
+                    "name": f"Size_{size}_20pct",
+                    "chunk_size": size,
+                    "chunk_overlap": overlap
+                })
+            
+            overlaps = [0.1, 0.3, 0.4]
+            for overlap_ratio in overlaps:
+                overlap = int(1000 * overlap_ratio)
+                configs.append({
+                    "name": f"Size_1000_{int(overlap_ratio*100)}pct",
+                    "chunk_size": 1000,
+                    "chunk_overlap": overlap
+                })
+            
+            return configs
+        
+        elif test_mode == "size_focused":
+            configs = []
+            sizes = [300, 500, 800, 1000, 1500, 2000, 2500]
+            for size in sizes:
+                overlap = int(size * 0.2)
+                configs.append({
+                    "name": f"Size_{size}",
+                    "chunk_size": size,
+                    "chunk_overlap": overlap
+                })
+            return configs
+        
+        elif test_mode == "overlap_focused":
+            configs = []
+            size = 1000
+            overlap_ratios = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40]
+            for ratio in overlap_ratios:
+                overlap = int(size * ratio)
+                configs.append({
+                    "name": f"Overlap_{int(ratio*100)}pct",
+                    "chunk_size": size,
+                    "chunk_overlap": overlap
+                })
+            return configs
+        
+        elif test_mode == "matrix":
+            configs = []
+            sizes = [500, 1000, 2000]
+            overlap_ratios = [0.10, 0.20, 0.30, 0.40]
+            for size in sizes:
+                for ratio in overlap_ratios:
+                    overlap = int(size * ratio)
+                    configs.append({
+                        "name": f"S{size}_O{int(ratio*100)}pct",
+                        "chunk_size": size,
+                        "chunk_overlap": overlap
+                    })
+            return configs
+        
+        else:
+            return self._get_predefined_configs("quick")
+    
+    def _create_test_config(self, cfg: Dict) -> 'UserConfiguration':
+        """Create configuration for testing."""
+        config = UserConfiguration()
+        config.model_path = self.base_config.model_path
+        config.documents_folder = self.base_config.documents_folder
+        config.selected_formats = self.base_config.selected_formats
+        config.embedding_model = self.base_config.embedding_model
+        config.chunk_size = cfg['chunk_size']
+        config.chunk_overlap = cfg['chunk_overlap']
+        return config
+    
+    def _confirm_test(self, num_configs: int) -> bool:
+        """Ask user to confirm test execution."""
+        print(f"⚠️ This will test {num_configs} configuration(s).")
+        print(f"⏱️ Estimated time: ~{num_configs * 2} minutes")
+        print("💾 Each test creates a separate database")
+        print("🧹 Databases are cleaned up automatically\n")
+        
+        response = input("Continue? [Y/n]: ").strip().lower()
+        return response in ('', 'y', 'yes')
+    
+    def _generate_comparison_report(self):
+        """Generate comparison report."""
+        separator = "=" * 80
+        dash_separator = "-" * 80
+        
+        print()
+        print(separator)
+        print("📊 CONFIGURATION COMPARISON REPORT")
+        print(separator)
+        print()
+        
+        if not self.results:
+            print("No results to compare.")
+            return
+        
+        successful_results = {k: v for k, v in self.results.items() if 'error' not in v}
+        
+        if not successful_results:
+            print("❌ All tests failed!")
+            return
+        
+        # Table header
+        print(f"{'Configuration':<25} {'Size':<8} {'Overlap':<10} {'Avg Time':<12} "
+              f"{'Sources':<10} {'Success':<10}")
+        print(dash_separator)
+        
+        # Sort by average response time
+        sorted_results = sorted(
+            successful_results.items(),
+            key=lambda x: x[1].get('avg_response_time', float('inf'))
+        )
+        
+        # Table rows
+        for name, summary in sorted_results:
+            size = summary.get('chunk_size', 'N/A')
+            overlap = summary.get('chunk_overlap', 'N/A')
+            overlap_pct = f"{summary.get('overlap_ratio', 0) * 100:.0f}%" if 'overlap_ratio' in summary else 'N/A'
+            avg_time = summary.get('avg_response_time', 0)
+            avg_sources = summary.get('avg_sources_per_question', 0)
+            success_rate = f"{summary.get('successful', 0)}/{summary.get('total_questions', 0)}"
+            
+            print(f"{name:<25} {size:<8} {overlap_pct:<10} {avg_time:<12.2f} "
+                  f"{avg_sources:<10.1f} {success_rate:<10}")
+        
+        print()
+        print(separator)
+        
+        self._print_recommendations(sorted_results)
+        self._save_comparison()
+    
+    def _generate_detailed_analysis(self):
+        """Generate detailed analysis."""
+        separator = "=" * 80
+        dash_separator = "-" * 60
+        
+        print()
+        print(separator)
+        print("📈 DETAILED ANALYSIS")
+        print(separator)
+        print()
+        
+        successful_results = {k: v for k, v in self.results.items() if 'error' not in v}
+        
+        if len(successful_results) < 2:
+            print("Need at least 2 successful tests for analysis.")
+            return
+        
+        self._analyze_by_dimension(successful_results, 'chunk_size', 'Chunk Size')
+        self._analyze_by_dimension(successful_results, 'overlap_ratio', 'Overlap Ratio')
+    
+    def _analyze_by_dimension(self, results: Dict, dimension: str, display_name: str):
+        """Analyze results by dimension."""
+        dash_separator = "-" * 60
+        
+        print(f"\n{display_name} Analysis:")
+        print(dash_separator)
+        
+        grouped = {}
+        for name, summary in results.items():
+            value = summary.get(dimension)
+            if value is None:
+                continue
+            
+            if dimension == 'overlap_ratio':
+                key = f"{value * 100:.0f}%"
+            else:
+                key = str(value)
+            
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(summary)
+        
+        for key, summaries in sorted(grouped.items()):
+            avg_time = sum(s.get('avg_response_time', 0) for s in summaries) / len(summaries)
+            avg_sources = sum(s.get('avg_sources_per_question', 0) for s in summaries) / len(summaries)
+            
+            print(f"  {key:>10}: Avg time {avg_time:.2f}s, Avg sources {avg_sources:.1f}")
+    
+    def _print_recommendations(self, sorted_results: List[Tuple[str, Dict]]):
+        """Print recommendations."""
+        dash_separator = "-" * 80
+        
+        print("\n🏆 RECOMMENDATIONS:")
+        print(dash_separator)
+        
+        if not sorted_results:
+            return
+        
+        # Fastest
+        fastest = sorted_results[0]
+        print(f"\n⚡ Fastest Configuration: {fastest[0]}")
+        print(f"   Chunk size: {fastest[1].get('chunk_size')}")
+        print(f"   Overlap: {fastest[1].get('chunk_overlap')} ({fastest[1].get('overlap_ratio', 0) * 100:.0f}%)")
+        print(f"   Avg time: {fastest[1].get('avg_response_time', 0):.2f}s")
+        
+        # Most thorough
+        most_thorough = max(sorted_results, key=lambda x: x[1].get('avg_sources_per_question', 0))
+        print(f"\n📚 Most Thorough: {most_thorough[0]}")
+        print(f"   Chunk size: {most_thorough[1].get('chunk_size')}")
+        print(f"   Overlap: {most_thorough[1].get('chunk_overlap')} ({most_thorough[1].get('overlap_ratio', 0) * 100:.0f}%)")
+        print(f"   Avg sources: {most_thorough[1].get('avg_sources_per_question', 0):.1f}")
+        
+        # Balanced
+        mid_idx = len(sorted_results) // 2
+        balanced = sorted_results[mid_idx]
+        print(f"\n⚖️ Balanced Option: {balanced[0]}")
+        print(f"   Chunk size: {balanced[1].get('chunk_size')}")
+        print(f"   Overlap: {balanced[1].get('chunk_overlap')} ({balanced[1].get('overlap_ratio', 0) * 100:.0f}%)")
+        print(f"   Avg time: {balanced[1].get('avg_response_time', 0):.2f}s")
+        
+        print("\n💡 General Insights:")
+        
+        sizes = sorted(set(r[1].get('chunk_size', 0) for r in sorted_results))
+        if len(sizes) > 2:
+            small_avg = sum(r[1].get('avg_response_time', 0) for r in sorted_results 
+                          if r[1].get('chunk_size', 0) <= sizes[len(sizes)//3]) / max(1, len(sizes)//3)
+            large_avg = sum(r[1].get('avg_response_time', 0) for r in sorted_results 
+                          if r[1].get('chunk_size', 0) >= sizes[2*len(sizes)//3]) / max(1, len(sizes)//3)
+            
+            if small_avg < large_avg * 0.9:
+                print("   • Smaller chunks generally perform faster")
+            elif large_avg < small_avg * 0.9:
+                print("   • Larger chunks generally perform faster")
+            else:
+                print("   • Chunk size has minimal impact on speed")
+        
+        overlaps = sorted(set(r[1].get('overlap_ratio', 0) for r in sorted_results))
+        if len(overlaps) > 2:
+            low_overlap = [r for r in sorted_results if r[1].get('overlap_ratio', 0) <= 0.15]
+            high_overlap = [r for r in sorted_results if r[1].get('overlap_ratio', 0) >= 0.30]
+            
+            if low_overlap and high_overlap:
+                low_sources = sum(r[1].get('avg_sources_per_question', 0) for r in low_overlap) / len(low_overlap)
+                high_sources = sum(r[1].get('avg_sources_per_question', 0) for r in high_overlap) / len(high_overlap)
+                
+                if high_sources > low_sources * 1.1:
+                    print("   • Higher overlap provides more context")
+                elif low_sources > high_sources * 1.1:
+                    print("   • Lower overlap is more efficient")
+    
+    def _save_comparison(self):
+        """Save comparison results."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        json_file = f"comparison_{timestamp}.json"
+        with open(json_file, 'w') as f:
+            json.dump({
+                'timestamp': datetime.now().isoformat(),
+                'results': self.results,
+                'summary': self._generate_summary_statistics()
+            }, f, indent=2)
+        
+        print(f"\n✅ Detailed results saved to: {json_file}")
+        
+        csv_file = f"comparison_{timestamp}.csv"
+        self._save_csv(csv_file)
+        print(f"✅ CSV export saved to: {csv_file}")
+    
+    def _save_csv(self, filepath: str):
+        """Save results as CSV."""
+        import csv
+        
+        successful_results = {k: v for k, v in self.results.items() if 'error' not in v}
+        
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            writer.writerow([
+                'Configuration', 'Chunk Size', 'Chunk Overlap', 'Overlap %',
+                'Avg Response Time', 'Min Time', 'Max Time',
+                'Avg Sources', 'Success Rate', 'Total Questions'
+            ])
+            
+            for name, summary in successful_results.items():
+                writer.writerow([
+                    name,
+                    summary.get('chunk_size', ''),
+                    summary.get('chunk_overlap', ''),
+                    f"{summary.get('overlap_ratio', 0) * 100:.1f}",
+                    f"{summary.get('avg_response_time', 0):.2f}",
+                    f"{summary.get('min_response_time', 0):.2f}",
+                    f"{summary.get('max_response_time', 0):.2f}",
+                    f"{summary.get('avg_sources_per_question', 0):.1f}",
+                    f"{summary.get('successful', 0)}/{summary.get('total_questions', 0)}",
+                    summary.get('total_questions', 0)
+                ])
+    
+    def _generate_summary_statistics(self) -> Dict:
+        """Generate summary statistics."""
+        successful = {k: v for k, v in self.results.items() if 'error' not in v}
+        
+        if not successful:
+            return {}
+        
+        return {
+            'total_configs_tested': len(self.results),
+            'successful_tests': len(successful),
+            'failed_tests': len(self.results) - len(successful),
+            'fastest_config': min(successful.items(), 
+                                key=lambda x: x[1].get('avg_response_time', float('inf')))[0],
+            'slowest_config': max(successful.items(), 
+                                key=lambda x: x[1].get('avg_response_time', 0))[0],
+            'most_thorough_config': max(successful.items(),
+                                       key=lambda x: x[1].get('avg_sources_per_question', 0))[0],
+        }
+
+
+# ============================================================================
+# SECTION 7: USER CONFIGURATION
+# ============================================================================
+
+class UserConfiguration:
+    """User configuration management."""
+    
+    def __init__(self):
+        self.model_path: str = ""
+        self.documents_folder: str = ""
+        self.selected_formats: Set[DocumentFormat] = set()
+        self.chunk_size: int = 1000
+        self.chunk_overlap: int = 200
+        self.embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+        self.persist_directory: str = "./chroma_db"
+        self.config_file: str = "chatbot_config.json"
+    
+    def get_formats_hash(self) -> str:
+        if not self.selected_formats:
+            return "default"
+        format_values = sorted([f.value for f in self.selected_formats])
+        format_string = "_".join(format_values)
+        return hashlib.md5(format_string.encode()).hexdigest()[:8]
+    
+    def update_persist_directory(self):
+        formats_hash = self.get_formats_hash()
+        format_names = "_".join(sorted([f.value for f in self.selected_formats]))
+        self.persist_directory = f"./chroma_db_{format_names}_{formats_hash}"
+    
+    def load_from_file(self, filepath: str = None) -> bool:
+        filepath = filepath or self.config_file
+        if not os.path.exists(filepath):
+            return False
+        try:
+            with open(filepath, 'r') as f:
+                config = json.load(f)
+            self.model_path = config.get('model_path', '')
+            self.documents_folder = config.get('documents_folder', '')
+            format_strings = config.get('selected_formats', [])
+            self.selected_formats = set()
+            for fmt_str in format_strings:
+                try:
+                    fmt = DocumentFormat(fmt_str.lower())
+                    self.selected_formats.add(fmt)
+                except ValueError:
+                    pass
+            self.chunk_size = config.get('chunk_size', 1000)
+            self.chunk_overlap = config.get('chunk_overlap', 200)
+            self.embedding_model = config.get('embedding_model', self.embedding_model)
+            self.update_persist_directory()
+            return True
+        except Exception as e:
+            return False
+    
+    def save_to_file(self, filepath: str = None):
+        filepath = filepath or self.config_file
+        config = {
+            'model_path': self.model_path,
+            'documents_folder': self.documents_folder,
+            'selected_formats': [fmt.value for fmt in self.selected_formats],
+            'chunk_size': self.chunk_size,
+            'chunk_overlap': self.chunk_overlap,
+            'embedding_model': self.embedding_model,
+            'persist_directory': self.persist_directory,
+            'saved_at': datetime.now().isoformat()
+        }
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(config, indent=2, fp=f)
+        except Exception as e:
+            logger.error(f"Failed to save: {e}")
+    
+    def interactive_setup(self) -> bool:
+        """Interactive setup wizard."""
+        separator = "=" * 70
+        
+        print()
+        print(separator)
+        print("🚀 INTERACTIVE CHATBOT CONFIGURATION WIZARD")
+        print(separator)
+        
+        if os.path.exists(self.config_file):
+            print("\n📄 Found existing configuration")
+            if self._get_yes_no("Load existing configuration?", default='y'):
+                if self.load_from_file():
+                    print("\n✅ Loaded configuration")
+                    print(f"  Model: {os.path.basename(self.model_path)}")
+                    print(f"  Documents: {self.documents_folder}")
+                    print(f"  Formats: {', '.join(str(f) for f in self.selected_formats)}")
+                    print(f"  Chunk size: {self.chunk_size}")
+                    print(f"  Chunk overlap: {self.chunk_overlap}")
+                    
+                    if self._get_yes_no("\nUse this configuration?", default='y'):
+                        if self._validate_configuration():
+                            return True
+        
+        print()
+        print(separator)
+        print("📝 STEP 1: SELECT DOCUMENT FORMATS")
+        print(separator)
+        
+        self.selected_formats = self._select_formats()
+        if not self.selected_formats:
+            return False
+        
+        self.update_persist_directory()
+        
+        print()
+        print(separator)
+        print("📁 STEP 2: DOCUMENTS FOLDER")
+        print(separator)
+        
+        self.documents_folder = self._get_folder_path(
+            "Enter documents folder path",
+            default=self.documents_folder or "./documents"
+        )
+        
+        print()
+        print(separator)
+        print("🤖 STEP 3: LANGUAGE MODEL")
+        print(separator)
+        
+        self.model_path = self._get_file_path(
+            "Enter model file path",
+            default=self.model_path or "models/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+            must_exist=True
+        )
+        
+        print()
+        print(separator)
+        print("⚙️ STEP 4: ADVANCED SETTINGS")
+        print(separator)
+        
+        if self._get_yes_no("Configure advanced settings?", default='n'):
+            self._configure_advanced_settings()
+        
+        if self._get_yes_no("\nSave configuration?", default='y'):
+            self.save_to_file()
+            print(f"✅ Configuration saved to: {self.config_file}")
+        
+        return self._validate_configuration()
+    
+    def _select_formats(self) -> Set[DocumentFormat]:
+        available = [fmt for fmt in DocumentFormat if fmt.is_available()]
+        if not available:
+            print("❌ No document formats available!")
+            return set()
+        
+        print("\nAvailable formats:")
+        for i, fmt in enumerate(available, 1):
+            print(f"  {i}. {fmt} - {fmt.get_description()}")
+        
+        while True:
+            response = input("\nSelect formats (e.g., 1,2 or 'all'): ").strip().lower()
+            if response == 'all':
+                return set(available)
+            try:
+                indices = [int(x.strip()) for x in response.split(',')]
+                selected = set()
+                for idx in indices:
+                    if 1 <= idx <= len(available):
+                        selected.add(available[idx - 1])
+                if selected:
+                    return selected
+                print("❌ No valid formats selected. Try again.")
+            except ValueError:
+                print("❌ Invalid input. Use format like: 1,2 or 'all'")
+    
+    def _get_folder_path(self, prompt: str, default: str = "") -> str:
+        while True:
+            if default:
+                user_input = input(f"{prompt} [{default}]: ").strip()
+                path = user_input if user_input else default
+            else:
+                path = input(f"{prompt}: ").strip()
+            
+            path = os.path.expanduser(path)
+            if os.path.exists(path) and os.path.isdir(path):
+                return os.path.abspath(path)
+            elif self._get_yes_no("Folder doesn't exist. Create it?", default='y'):
+                try:
+                    os.makedirs(path, exist_ok=True)
+                    return os.path.abspath(path)
+                except Exception as e:
+                    print(f"❌ Failed to create folder: {e}")
+            else:
+                print("❌ Please enter a valid folder path.")
+    
+    def _get_file_path(self, prompt: str, default: str = "", must_exist: bool = True) -> str:
+        while True:
+            if default:
+                user_input = input(f"{prompt} [{default}]: ").strip()
+                path = user_input if user_input else default
+            else:
+                path = input(f"{prompt}: ").strip()
+            
+            path = os.path.expanduser(path)
+            if must_exist:
+                if os.path.exists(path) and os.path.isfile(path):
+                    return os.path.abspath(path)
+                else:
+                    print(f"❌ File not found: {path}")
+                    print("   Please check the path and try again.")
+            else:
+                return os.path.abspath(path)
+    
+    def _get_yes_no(self, prompt: str, default: str = 'y') -> bool:
+        choices = "Y/n" if default == 'y' else "y/N"
+        while True:
+            response = input(f"{prompt} [{choices}]: ").strip().lower()
+            if not response:
+                return default == 'y'
+            if response in ('y', 'yes'):
+                return True
+            elif response in ('n', 'no'):
+                return False
+            print("❌ Please enter 'y' or 'n'")
+    
+    def _configure_advanced_settings(self):
+        print("\n📏 Chunk Size (how large each text chunk is):")
+        print("   Smaller = faster, less context")
+        print("   Larger = slower, more context")
+        self.chunk_size = self._get_integer("Chunk size", self.chunk_size, 100, 5000)
+        
+        print("\n🔗 Chunk Overlap (text shared between chunks):")
+        print("   Higher = better context continuity, more redundancy")
+        print("   Lower = less redundancy, faster")
+        max_overlap = self.chunk_size // 2
+        self.chunk_overlap = self._get_integer("Overlap", self.chunk_overlap, 0, max_overlap)
+    
+    def _get_integer(self, prompt: str, default: int, min_val: int = None, max_val: int = None) -> int:
+        while True:
+            user_input = input(f"{prompt} [{default}]: ").strip()
+            if not user_input:
+                return default
+            try:
+                value = int(user_input)
+                if min_val is not None and value < min_val:
+                    print(f"❌ Minimum value is {min_val}")
+                    continue
+                if max_val is not None and value > max_val:
+                    print(f"❌ Maximum value is {max_val}")
+                    continue
+                return value
+            except ValueError:
+                print("❌ Please enter a valid integer.")
+    
+    def _validate_configuration(self) -> bool:
+        issues = []
+        if not self.model_path or not os.path.exists(self.model_path):
+            issues.append("Model file not found")
+        if not self.documents_folder:
+            issues.append("Documents folder not set")
+        if not self.selected_formats:
+            issues.append("No formats selected")
+        
+        if issues:
+            print("\n❌ Configuration Issues:")
+            for issue in issues:
+                print(f"  • {issue}")
+            return False
+        
+        return True
+
+
+# ============================================================================
+# SECTION 8: DOCUMENT LOADERS
+# ============================================================================
+
+class DocumentLoader:
+    """Base document loader."""
+    
+    def __init__(self, file_path: str):
+        self.file_path = Path(file_path)
+        if not self.file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+    
+    def load(self) -> List[Document]:
+        raise NotImplementedError()
+    
+    def _create_metadata(self, additional: Dict = None) -> Dict:
+        metadata = {
+            'source': str(self.file_path),
+            'filename': self.file_path.name,
+            'file_type': self.file_path.suffix.lstrip('.'),
+            'loaded_at': datetime.now().isoformat(),
+        }
+        if additional:
+            metadata.update(additional)
+        return metadata
+
+
+class PlainTextLoader(DocumentLoader):
+    """Plain text file loader."""
+    
+    def load(self) -> List[Document]:
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(self.file_path, 'r', encoding='latin-1') as f:
+                content = f.read()
+        
+        # Clean up excessive newlines
+        content = re.sub(r'\n\s*\n\s*\n', '\n\n', content).strip()
+        
+        return [Document(
+            page_content=content,
+            metadata=self._create_metadata({'format': 'txt'})
+        )]
+
+
+class PDFLoader(DocumentLoader):
+    """PDF document loader."""
+    
+    def load(self) -> List[Document]:
+        documents = []
+        try:
+            import pdfplumber
+            with pdfplumber.open(self.file_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, start=1):
+                    text = page.extract_text()
+                    if text and text.strip():
+                        documents.append(Document(
+                            page_content=text.strip(),
+                            metadata=self._create_metadata({
+                                'format': 'pdf',
+                                'page_number': page_num,
+                                'total_pages': len(pdf.pages)
+                            })
+                        ))
+            return documents
+        except Exception as e:
+            raise Exception(f"Failed to load PDF: {e}")
+
+
+class HTMLLoader(DocumentLoader):
+    """HTML document loader with Markdown conversion."""
+    
+    def __init__(self, file_path: str):
+        super().__init__(file_path)
+        self.h = html2text.HTML2Text()
+        self.h.ignore_links = False
+        self.h.body_width = 0
+    
+    def load(self) -> List[Document]:
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+        except UnicodeDecodeError:
+            with open(self.file_path, 'r', encoding='latin-1') as f:
+                html_content = f.read()
+        
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove unwanted tags
+        for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'header']):
+            tag.decompose()
+        
+        # Convert to Markdown
+        markdown = self.h.handle(str(soup)).strip()
+        
+        return [Document(
+            page_content=markdown,
+            metadata=self._create_metadata({'format': 'html'})
+        )]
+
+
+class EnhancedDITALoader(DocumentLoader):
+    """Enhanced DITA loader that converts to Markdown."""
+    
+    def __init__(self, file_path: str):
+        super().__init__(file_path)
+        self.note_icons = {
+            'note': '📝',
+            'tip': '💡',
+            'important': '❗',
+            'warning': '⚠️',
+            'caution': '🚨',
+            'danger': '☠️',
+            'attention': '⚡',
+            'remember': '🔔',
+            'restriction': '🚫',
+            'fastpath': '⚡',
+            'other': 'ℹ️'
+        }
+    
+    def load(self) -> List[Document]:
+        """Load and convert DITA to Markdown."""
+        try:
+            tree = ET.parse(self.file_path)
+            root = tree.getroot()
+            
+            topic_type = self._get_topic_type(root)
+            markdown_content = self._convert_to_markdown(root, topic_type)
+            metadata = self._extract_metadata(root, topic_type)
+            
+            return [Document(
+                page_content=markdown_content.strip(),
+                metadata=self._create_metadata(metadata)
+            )]
+            
+        except ET.ParseError as e:
+            raise Exception(f"Failed to parse DITA XML: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to load DITA: {e}")
+    
+    def _get_topic_type(self, root: ET.Element) -> str:
+        """Determine DITA topic type."""
+        tag = root.tag.lower()
+        if '}' in tag:
+            tag = tag.split('}')[1]
+        
+        topic_types = {
+            'concept': 'Concept',
+            'task': 'Task',
+            'reference': 'Reference',
+            'topic': 'Topic',
+            'troubleshooting': 'Troubleshooting',
+            'glossentry': 'Glossary'
+        }
+        
+        return topic_types.get(tag, 'Topic')
+    
+    def _convert_to_markdown(self, element: ET.Element, topic_type: str, level: int = 0) -> str:
+        """Convert DITA XML to Markdown recursively."""
+        markdown = []
+        tag = self._get_tag_name(element)
+        
+        if tag in ('concept', 'task', 'reference', 'topic', 'troubleshooting'):
+            markdown.append(self._process_topic(element, topic_type))
+        elif tag == 'title':
+            markdown.append(self._process_title(element, level))
+        elif tag in ('p', 'shortdesc'):
+            markdown.append(self._process_paragraph(element))
+        elif tag == 'ul':
+            markdown.append(self._process_unordered_list(element))
+        elif tag == 'ol':
+            markdown.append(self._process_ordered_list(element))
+        elif tag == 'note':
+            markdown.append(self._process_note(element))
+        elif tag == 'codeblock':
+            markdown.append(self._process_codeblock(element))
+        elif tag == 'table':
+            markdown.append(self._process_table(element))
+        elif tag == 'section':
+            markdown.append(self._process_section(element, level + 1))
+        elif tag == 'xref':
+            markdown.append(self._process_xref(element))
+        elif tag in ('b', 'strong'):
+            markdown.append(f"**{self._get_text_content(element)}**")
+        elif tag in ('i', 'em'):
+            markdown.append(f"*{self._get_text_content(element)}*")
+        elif tag == 'codeph':
+            markdown.append(f"`{self._get_text_content(element)}`")
+        elif tag == 'filepath':
+            markdown.append(f"`{self._get_text_content(element)}`")
+        elif tag == 'cmdname':
+            markdown.append(f"**`{self._get_text_content(element)}`**")
+        elif tag == 'parmname':
+            markdown.append(f"`{self._get_text_content(element)}`")
+        elif tag == 'apiname':
+            markdown.append(f"`{self._get_text_content(element)}`")
+        elif tag == 'userinput':
+            code_content = self._get_text_content(element)
+            markdown.append(f"\n{code_content}\n")
+        elif tag == 'systemoutput':
+            code_content = self._get_text_content(element)
+            markdown.append(f"\n{code_content}\n")
+        elif tag in ('taskbody', 'conbody', 'refbody', 'body'):
+            markdown.append(self._process_body(element, level + 1))
+        elif tag == 'prereq':
+            markdown.append(self._process_prereq(element))
+        elif tag == 'steps':
+            markdown.append(self._process_steps(element))
+        elif tag == 'steps-unordered':
+            markdown.append(self._process_steps_unordered(element))
+        elif tag == 'result':
+            markdown.append(self._process_result(element))
+        elif tag == 'example':
+            markdown.append(self._process_example(element))
+        elif tag == 'fig':
+            markdown.append(self._process_figure(element))
+        elif tag == 'image':
+            markdown.append(self._process_image(element))
+        elif tag == 'dl':
+            markdown.append(self._process_definition_list(element))
+        elif tag == 'simpletable':
+            markdown.append(self._process_simple_table(element))
+        elif tag in ('prolog', 'metadata', 'related-links'):
+            pass
+        else:
+            for child in element:
+                markdown.append(self._convert_to_markdown(child, topic_type, level))
+        
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_topic(self, element: ET.Element, topic_type: str) -> str:
+        """Process main topic element."""
+        markdown = []
+        markdown.append(f"**[{topic_type}]**\n")
+        
+        title = element.find('.//title')
+        if title is not None:
+            markdown.append(f"# {self._get_text_content(title)}\n")
+        
+        shortdesc = element.find('.//shortdesc')
+        if shortdesc is not None:
+            markdown.append(f"*{self._get_text_content(shortdesc)}*\n")
+        
+        for child in element:
+            tag = self._get_tag_name(child)
+            if tag not in ('title', 'shortdesc', 'prolog'):
+                markdown.append(self._convert_to_markdown(child, topic_type, 1))
+        
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_title(self, element: ET.Element, level: int) -> str:
+        heading = '#' * min(level + 1, 6)
+        return f"{heading} {self._get_text_content(element)}\n"
+    
+    def _process_paragraph(self, element: ET.Element) -> str:
+        text = self._get_mixed_content(element)
+        return f"{text}\n" if text.strip() else ""
+    
+    def _process_unordered_list(self, element: ET.Element) -> str:
+        items = []
+        for li in element.findall('.//li'):
+            content = self._get_mixed_content(li)
+            if content.strip():
+                items.append(f"- {content}")
+        return '\n'.join(items) + '\n' if items else ""
+    
+    def _process_ordered_list(self, element: ET.Element) -> str:
+        items = []
+        for i, li in enumerate(element.findall('.//li'), 1):
+            content = self._get_mixed_content(li)
+            if content.strip():
+                items.append(f"{i}. {content}")
+        return '\n'.join(items) + '\n' if items else ""
+    
+    def _process_note(self, element: ET.Element) -> str:
+        note_type = element.get('type', 'note').lower()
+        icon = self.note_icons.get(note_type, self.note_icons['other'])
+        type_label = note_type.upper()
+        content = self._get_mixed_content(element)
+        return f"{icon} **{type_label}:** {content}\n"
+    
+    def _process_codeblock(self, element: ET.Element) -> str:
+        language = element.get('outputclass', '')
+        code = element.text or ""
+        code = code.strip()
+        
+        if language:
+            return f"{language}\n{code}\n"
+        else:
+            return f"\n{code}\n"
+        
+    def _process_table(self, element: ET.Element) -> str:
+        markdown = []
+        tgroup = element.find('.//tgroup')
+        if tgroup is None:
+            return ""
+        
+        thead = tgroup.find('.//thead')
+        headers = []
+        if thead is not None:
+            row = thead.find('.//row')
+            if row is not None:
+                for entry in row.findall('.//entry'):
+                    headers.append(self._get_text_content(entry))
+        
+        if not headers:
+            cols = int(tgroup.get('cols', '2'))
+            headers = [f"Column {i+1}" for i in range(cols)]
+        
+        markdown.append('| ' + ' | '.join(headers) + ' |')
+        markdown.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+        
+        tbody = tgroup.find('.//tbody')
+        if tbody is not None:
+            for row in tbody.findall('.//row'):
+                cells = []
+                for entry in row.findall('.//entry'):
+                    cells.append(self._get_text_content(entry))
+                while len(cells) < len(headers):
+                    cells.append('')
+                markdown.append('| ' + ' | '.join(cells) + ' |')
+        
+        return '\n'.join(markdown) + '\n'
+    
+    def _process_simple_table(self, element: ET.Element) -> str:
+        markdown = []
+        sthead = element.find('.//sthead')
+        headers = []
+        if sthead is not None:
+            for stentry in sthead.findall('.//stentry'):
+                headers.append(self._get_text_content(stentry))
+        
+        if headers:
+            markdown.append('| ' + ' | '.join(headers) + ' |')
+            markdown.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+        
+        for strow in element.findall('.//strow'):
+            cells = []
+            for stentry in strow.findall('.//stentry'):
+                cells.append(self._get_text_content(stentry))
+            if cells:
+                markdown.append('| ' + ' | '.join(cells) + ' |')
+        
+        return '\n'.join(markdown) + '\n' if markdown else ""
+    
+    def _process_section(self, element: ET.Element, level: int) -> str:
+        markdown = []
+        title = element.find('.//title')
+        if title is not None:
+            heading = '#' * min(level + 1, 6)
+            markdown.append(f"{heading} {self._get_text_content(title)}\n")
+        
+        for child in element:
+            if self._get_tag_name(child) != 'title':
+                markdown.append(self._convert_to_markdown(child, '', level))
+        
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_body(self, element: ET.Element, level: int) -> str:
+        markdown = []
+        for child in element:
+            markdown.append(self._convert_to_markdown(child, '', level))
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_prereq(self, element: ET.Element) -> str:
+        content = self._get_mixed_content(element)
+        return f"### Prerequisites\n\n{content}\n"
+    
+    def _process_steps(self, element: ET.Element) -> str:
+        markdown = ["### Steps\n"]
+        
+        for i, step in enumerate(element.findall('.//step'), 1):
+            cmd = step.find('.//cmd')
+            if cmd is not None:
+                markdown.append(f"{i}. **{self._get_text_content(cmd)}**")
+                
+                for info in step.findall('.//info'):
+                    info_text = self._get_mixed_content(info)
+                    if info_text.strip():
+                        markdown.append(f"   {info_text}")
+                
+                substeps = step.find('.//substeps')
+                if substeps is not None:
+                    for j, substep in enumerate(substeps.findall('.//substep'), 1):
+                        subcmd = substep.find('.//cmd')
+                        if subcmd is not None:
+                            markdown.append(f"   {chr(97+j-1)}. {self._get_text_content(subcmd)}")
+                
+                stepresult = step.find('.//stepresult')
+                if stepresult is not None:
+                    markdown.append(f"   *Result:* {self._get_text_content(stepresult)}")
+                
+                markdown.append("")
+        
+        return '\n'.join(markdown)
+    
+    def _process_steps_unordered(self, element: ET.Element) -> str:
+        markdown = ["### Steps (any order)\n"]
+        
+        for step in element.findall('.//step'):
+            cmd = step.find('.//cmd')
+            if cmd is not None:
+                markdown.append(f"- **{self._get_text_content(cmd)}**")
+                
+                for info in step.findall('.//info'):
+                    info_text = self._get_mixed_content(info)
+                    if info_text.strip():
+                        markdown.append(f"  {info_text}")
+                
+                markdown.append("")
+        
+        return '\n'.join(markdown)
+    
+    def _process_result(self, element: ET.Element) -> str:
+        content = self._get_mixed_content(element)
+        return f"### Result\n\n{content}\n"
+    
+    def _process_example(self, element: ET.Element) -> str:
+        markdown = ["### Example\n"]
+        
+        title = element.find('.//title')
+        if title is not None:
+            markdown.append(f"**{self._get_text_content(title)}**\n")
+        
+        for child in element:
+            if self._get_tag_name(child) != 'title':
+                markdown.append(self._convert_to_markdown(child, '', 3))
+        
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_figure(self, element: ET.Element) -> str:
+        markdown = []
+        title = element.find('.//title')
+        if title is not None:
+            markdown.append(f"**Figure:** {self._get_text_content(title)}\n")
+        
+        image = element.find('.//image')
+        if image is not None:
+            markdown.append(self._process_image(image))
+        
+        return '\n'.join(filter(None, markdown))
+    
+    def _process_image(self, element: ET.Element) -> str:
+        href = element.get('href', '')
+        alt = element.get('alt', 'Image')
+        return f"![{alt}]({href})\n"
+    
+    def _process_definition_list(self, element: ET.Element) -> str:
+        markdown = []
+        
+        for dlentry in element.findall('.//dlentry'):
+            dt = dlentry.find('.//dt')
+            dd = dlentry.find('.//dd')
+            
+            if dt is not None:
+                term = self._get_text_content(dt)
+                definition = self._get_text_content(dd) if dd is not None else ""
+                
+                markdown.append(f"**{term}**")
+                if definition:
+                    markdown.append(f": {definition}\n")
+        
+        return '\n'.join(markdown)
+    
+    def _process_xref(self, element: ET.Element) -> str:
+        href = element.get('href', '')
+        text = self._get_text_content(element) or href
+        
+        if href:
+            return f"[{text}]({href})"
+        else:
+            return text
+    
+    def _get_mixed_content(self, element: ET.Element) -> str:
+        parts = []
+        
+        if element.text:
+            parts.append(element.text.strip())
+        
+        for child in element:
+            tag = self._get_tag_name(child)
+            
+            if tag in ('b', 'strong'):
+                parts.append(f"**{self._get_text_content(child)}**")
+            elif tag in ('i', 'em'):
+                parts.append(f"*{self._get_text_content(child)}*")
+            elif tag == 'codeph':
+                parts.append(f"`{self._get_text_content(child)}`")
+            elif tag == 'xref':
+                parts.append(self._process_xref(child))
+            elif tag == 'cmdname':
+                parts.append(f"**`{self._get_text_content(child)}`**")
+            elif tag == 'parmname':
+                parts.append(f"`{self._get_text_content(child)}`")
+            elif tag == 'filepath':
+                parts.append(f"`{self._get_text_content(child)}`")
+            else:
+                parts.append(self._get_text_content(child))
+            
+            if child.tail:
+                parts.append(child.tail.strip())
+        
+        return ' '.join(filter(None, parts))
+    
+    def _get_text_content(self, element: ET.Element) -> str:
+        if element is None:
+            return ""
+        
+        text_parts = []
+        
+        if element.text:
+            text_parts.append(element.text)
+        
+        for child in element:
+            text_parts.append(self._get_text_content(child))
+            if child.tail:
+                text_parts.append(child.tail)
+        
+        return ''.join(text_parts).strip()
+    
+    def _get_tag_name(self, element: ET.Element) -> str:
+        tag = element.tag
+        if '}' in tag:
+            tag = tag.split('}')[1]
+        return tag.lower()
+    
+    def _extract_metadata(self, root: ET.Element, topic_type: str) -> Dict:
+        metadata = {
+            'format': 'dita',
+            'topic_type': topic_type,
+            'topic_id': root.get('id', ''),
+        }
+        
+        prolog = root.find('.//prolog')
+        if prolog is not None:
+            author = prolog.find('.//author')
+            if author is not None:
+                metadata['author'] = self._get_text_content(author)
+            
+            keywords = []
+            for keyword in prolog.findall('.//keyword'):
+                kw = self._get_text_content(keyword)
+                if kw:
+                    keywords.append(kw)
+            if keywords:
+                metadata['keywords'] = ', '.join(keywords)
+            
+            audience = prolog.find('.//audience')
+            if audience is not None:
+                aud_type = audience.get('type', '')
+                aud_job = audience.get('job', '')
+                if aud_type or aud_job:
+                    metadata['audience'] = f"{aud_type} {aud_job}".strip()
+            
+            created = prolog.find('.//created')
+            if created is not None:
+                metadata['created_date'] = created.get('date', '')
+            
+            revised = prolog.find('.//revised')
+            if revised is not None:
+                metadata['revised_date'] = revised.get('modified', '')
+        
+        return metadata
+
+
+class DocumentLoaderFactory:
+    """Factory for creating document loaders."""
+    
+    _loaders = {
+        DocumentFormat.PLAIN_TEXT: PlainTextLoader,
+        DocumentFormat.PDF: PDFLoader,
+        DocumentFormat.HTML: HTMLLoader,
+        DocumentFormat.DITA: EnhancedDITALoader,
+    }
+    
+    @classmethod
+    def create_loader(cls, file_path: str) -> DocumentLoader:
+        path = Path(file_path)
+        doc_format = DocumentFormat.from_extension(path.suffix)
+        
+        if doc_format is None:
+            raise ValueError(f"Unsupported file type: {path.suffix}")
+        
+        if not doc_format.is_available():
+            raise ValueError(f"Support for {doc_format} is not installed")
+        
+        loader_class = cls._loaders.get(doc_format)
+        if loader_class is None:
+            raise ValueError(f"No loader available for {doc_format}")
+        
+        return loader_class(file_path)
+
+
+class MultiFormatTextSplitter:
+    """Text splitter optimized for different document formats."""
+    
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+    
+    def split_documents(self, documents: List[Document]) -> List[Document]:
+        all_chunks = []
+        
+        for doc in documents:
+            doc_format = doc.metadata.get('format', 'unknown')
+            separators = self._get_separators(doc_format)
+            
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                separators=separators,
+                length_function=len,
+            )
+            
+            chunks = splitter.split_documents([doc])
+            
+            for i, chunk in enumerate(chunks):
+                chunk.metadata['chunk_id'] = len(all_chunks) + i
+                chunk.metadata['chunk_index'] = i
+                chunk.metadata['total_chunks'] = len(chunks)
+            
+            all_chunks.extend(chunks)
+        
+        return all_chunks
+
+    def verify_chunk_overlap(self, documents: List[Document]) -> None:
+        """Diagnostic function to verify chunk overlap."""
+        print("\n🔍 CHUNK OVERLAP VERIFICATION")
+        print("=" * 70)
+        
+        doc_chunks = {}
+        for doc in documents:
+            filename = doc.metadata.get('filename', 'unknown')
+            if filename not in doc_chunks:
+                doc_chunks[filename] = []
+            doc_chunks[filename].append(doc)
+        
+        for filename, chunks in doc_chunks.items():
+            if len(chunks) > 1:
+                print(f"\n📄 {filename}: {len(chunks)} chunks")
+                
+                for i in range(len(chunks) - 1):
+                    chunk1_text = chunks[i].page_content
+                    chunk2_text = chunks[i + 1].page_content
+                    
+                    # Check for overlap
+                    overlap_found = False
+                    overlap_length = 0
+                    
+                    # Check last N characters of chunk1 against first N characters of chunk2
+                    for length in range(min(len(chunk1_text), len(chunk2_text), self.chunk_overlap), 10, -1):
+                        if chunk1_text[-length:] == chunk2_text[:length]:
+                            overlap_found = True
+                            overlap_length = length
+                            break
+                    
+                    if overlap_found:
+                        print(f"   ✅ Chunks {i+1}↔{i+2}: {overlap_length} chars overlap")
+                    else:
+                        print(f"   ❌ Chunks {i+1}↔{i+2}: NO overlap detected")
+                        print(f"      Chunk {i+1} ends: ...{chunk1_text[-50:]}")
+                        print(f"      Chunk {i+2} starts: {chunk2_text[:50]}...")
+            else:
+                print(f"\n📄 {filename}: Single chunk (no overlap needed)")
+        
+        print("\n" + "=" * 70)
+    
+    def _get_separators(self, doc_format: str) -> List[str]:
+        if doc_format in ('html', 'dita'):
+            return [
+                "\n## ",
+                "\n### ",
+                "\n#### ",
+                "\n\n",
+                "\n",
+                ". ",
+                " ",
+                ""
+            ]
+        else:
+            return [
+                "\n\n",
+                "\n",
+                ". ",
+                " ",
+                ""
+            ]
+
+
+# ============================================================================
+# SECTION 9: INTERACTIVE CHATBOT
+# ============================================================================
+
+class InteractiveChatbot:
+    """Main chatbot class with RAG capabilities."""
+    
+    def __init__(self, config: UserConfiguration):
+        self.config = config
+        self.config.update_persist_directory()
+        
+        self.vectorstore = None
+        self.qa_chain = None
+        self.embeddings = None
+        self.llm = None
+        self.retriever = None
+        
+        self.loaded_documents = []
+        self.document_stats = {}
+        
+        self.session_logger = SessionLogger(config)
+        
+        self.query_cache = {}
+        self.query_log = []
+        self.llm_config = {}
+        self.retriever_config = {}
+    
+    def load_documents(self) -> List[Document]:
+        """Load documents from configured folder."""
+        logger.info("📁 LOADING DOCUMENTS")
+        
+        documents_path = Path(self.config.documents_folder)
+        selected_extensions = set()
+        for fmt in self.config.selected_formats:
+            selected_extensions.update(fmt.get_extensions())
+        
+        all_files = []
+        for ext in selected_extensions:
+            all_files.extend(documents_path.rglob(f"*{ext}"))
+        
+        logger.info(f"Found {len(all_files)} file(s) to process")
+        
+        documents = []
+        stats = {str(fmt): {'count': 0, 'success': 0, 'failed': 0} 
+                for fmt in self.config.selected_formats}
+        
+        for file_path in all_files:
+            try:
+                doc_format = DocumentFormat.from_extension(file_path.suffix)
+                if doc_format not in self.config.selected_formats:
+                    continue
+                
+                fmt_str = str(doc_format)
+                stats[fmt_str]['count'] += 1
+                
+                logger.info(f"Loading: {file_path.name}")
+                loader = DocumentLoaderFactory.create_loader(str(file_path))
+                file_docs = loader.load()
+                documents.extend(file_docs)
+                stats[fmt_str]['success'] += 1
+                
+            except Exception as e:
+                if doc_format is not None and doc_format in self.config.selected_formats:
+                    stats[str(doc_format)]['failed'] += 1
+                logger.error(f"Failed to load {file_path.name}: {e}")
+        
+        self.document_stats = stats
+        
+        logger.info(f"Loaded {len(documents)} document(s)")
+        
+        splitter = MultiFormatTextSplitter(
+            chunk_size=self.config.chunk_size,
+            chunk_overlap=self.config.chunk_overlap
+        )
+        chunks = splitter.split_documents(documents)
+
+        splitter.verify_chunk_overlap(chunks)
+        
+        logger.info(f"✅ Created {len(chunks)} chunks")
+        return chunks
+    
+    def create_vectorstore(self, documents: List[Document]):
+        """Create or load vector database."""
+        logger.info("🔍 VECTOR STORE SETUP")
+        
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name=self.config.embedding_model,
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        
+        db_exists = os.path.exists(self.config.persist_directory)
+        
+        if db_exists:
+            try:
+                logger.info("Checking existing database...")
+                test_store = Chroma(
+                    persist_directory=self.config.persist_directory,
+                    embedding_function=self.embeddings
+                )
+                
+                sample = test_store.get(limit=10)
+                if sample and 'metadatas' in sample:
+                    stored_formats = {m['format'] for m in sample['metadatas'] if m and 'format' in m}
+                    selected_formats = {f.value for f in self.config.selected_formats}
+                    
+                    if stored_formats == selected_formats:
+                        logger.info("✅ Reusing existing database")
+                        self.vectorstore = test_store
+                        return
+                    else:
+                        logger.info("Format mismatch, recreating database")
+                        shutil.rmtree(self.config.persist_directory)
+            except Exception as e:
+                logger.warning(f"Database check failed: {e}")
+                if os.path.exists(self.config.persist_directory):
+                    shutil.rmtree(self.config.persist_directory)
+        
+        logger.info("Creating new vector database...")
+        self.vectorstore = Chroma.from_documents(
+            documents=documents,
+            embedding=self.embeddings,
+            persist_directory=self.config.persist_directory
+        )
+        logger.info("✅ Database created")
+    
+    def setup_llm(self):
+        """Setup language model."""
+        logger.info("🤖 LOADING LLM")
+        
+        model_name = os.path.basename(self.config.model_path).lower()
+        if 'mistral' in model_name:
+            model_type = 'mistral'
+        elif 'llama' in model_name:
+            model_type = 'llama'
+        else:
+            model_type = 'llama'
+        
+        self.llm_config = {
+            'max_new_tokens': 512,
+            'temperature': 0.1,
+            'context_length': 2048,
+            'top_p': 0.95,
+            'repetition_penalty': 1.1,
+        }
+        
+        self.llm = CTransformers(
+            model=self.config.model_path,
+            model_type=model_type,
+            config=self.llm_config
+        )
+        logger.info("✅ LLM loaded")
+    
+    def create_qa_chain(self):
+        """Create question-answering chain."""
+        self.setup_llm()
+        
+        template = """You are a helpful AI assistant. Use the following context to answer the question accurately and concisely.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+        
+        prompt = PromptTemplate(
+            template=template,
+            input_variables=["context", "question"]
+        )
+        
+        self.retriever_config = {
+            'search_type': 'similarity',
+            'k': 5
+        }
+        
+        self.retriever = self.vectorstore.as_retriever(
+            search_type=self.retriever_config['search_type'],
+            search_kwargs={"k": self.retriever_config['k']}
+        )
+        
+        def format_docs(docs):
+            return "\n\n".join(doc.page_content for doc in docs)
+        
+        self.qa_chain = (
+            {"context": self.retriever | format_docs, "question": RunnablePassthrough()}
+            | prompt
+            | self.llm
+            | StrOutputParser()
+        )
+        
+        self.session_logger.set_model_params(self.llm_config, self.retriever_config)
+    
+    def initialize(self):
+        """Initialize chatbot."""
+        logger.info("🚀 INITIALIZING CHATBOT")
+        
+        documents = self.load_documents()
+        self.session_logger.set_document_stats(self.document_stats)
+        
+        self.create_vectorstore(documents)
+        self.create_qa_chain()
+        
+        logger.info("✅ CHATBOT READY")
+    
+    def query(self, question: str) -> Dict:
+        """Process a question and return answer."""
+        if not self.qa_chain:
+            raise Exception("Chatbot not initialized")
+        
+        start_time = time.time()
+        
+        try:
+            source_docs = self.retriever.invoke(question)
+            answer = self.qa_chain.invoke(question)
+            elapsed = time.time() - start_time
+            
+            response = {
+                "answer": answer,
+                "sources": source_docs,
+                "source_chunks": [doc.page_content for doc in source_docs],  # ADD THIS LINE
+                "response_time": elapsed,
+                "from_cache": False
+            }
+            
+            self.session_logger.log_query(
+                question=question,
+                answer=answer,
+                response_time=elapsed,
+                sources=source_docs,
+                from_cache=False
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Query failed: {e}")
+            return {"error": str(e)}
+    
+    def finalize_session(self):
+        """Finalize session and save logs."""
+        self.session_logger.finalize()
+
+
+# ============================================================================
+# SECTION 10: INTERACTIVE MODE WITH EXPORT COMMANDS
+# ============================================================================
+
+def run_interactive_mode(chatbot: InteractiveChatbot):
+    """Run interactive chat session with markdown export capabilities."""
+    
+    separator = "=" * 70
+    
+    print()
+    print(separator)
+    print("💬 CHATBOT READY - VERSION 3.5 (Chunk Display + Full Logs)")
+    print(separator)
+    print("Commands:")
+    print("  • Type your question to get an answer")
+    print()
+    print("  Batch & Testing:")
+    print("    batch <file>           - Run batch queries from file")
+    print("    compare-configs <file> - Test different configurations")
+    print("    test-sizes <file>      - Test chunk sizes")
+    print("    test-overlaps <file>   - Test overlap ratios")
+    print("    test-matrix <file>     - Full configuration matrix")
+    print()
+    print("  Markdown Export:")
+    print("    list-docs              - List all loaded documents")
+    print("    view <filename>        - View markdown for a document")
+    print("    export <filename>      - Export document to markdown file")
+    print("    export-all             - Export all documents to markdown")
+    print()
+    print("  Information:")
+    print("    log                    - Show log file location")
+    print("    formats                - Show loaded formats")
+    print("    stats                  - Show session statistics")
+    print()
+    print("  Utilities:")
+    print("    cleanup                - Clean up old test databases")
+    print("    help                   - Show this help message")
+    print("    quit / exit / q        - Exit chatbot")
+    print(separator)
+    print(f"\n📝 Session log: {chatbot.session_logger.get_log_path()}")
+    print(f"💾 Database: {chatbot.config.persist_directory}")
+    print(separator)
+    print()
+    
+    try:
+        while True:
+            try:
+                question = input("\n🧑 You: ").strip()
+                
+                if not question:
+                    continue
+                
+                # ============================================================
+                # COMMAND: QUIT
+                # ============================================================
+                if question.lower() in ['quit', 'exit', 'q']:
+                    print("\n👋 Goodbye!")
+                    break
+                
+                # ============================================================
+                # COMMAND: HELP
+                # ============================================================
+                if question.lower() == 'help':
+                    print("\n📖 AVAILABLE COMMANDS")
+                    print("=" * 70)
+                    
+                    print("\n🔍 Query Commands:")
+                    print("  [Just type your question]  Ask the chatbot anything")
+                    print("  batch <file>               Run multiple questions from file")
+                    
+                    print("\n🧪 Testing Commands:")
+                    print("  compare-configs <file>     Compare different configurations")
+                    print("  test-sizes <file>          Test different chunk sizes")
+                    print("  test-overlaps <file>       Test different overlap ratios")
+                    print("  test-matrix <file>         Full configuration matrix test")
+                    
+                    print("\n📄 Document Commands:")
+                    print("  list-docs                  List all loaded documents")
+                    print("  view <filename>            View markdown in terminal")
+                    print("  export <filename>          Export document to .md file")
+                    print("  export-all                 Export all documents to files")
+                    
+                    print("\n📊 Information Commands:")
+                    print("  log                        Show log file locations")
+                    print("  formats                    Show loaded document formats")
+                    print("  stats                      Show session statistics")
+                    
+                    print("\n🔧 Utility Commands:")
+                    print("  cleanup                    Remove old test databases")
+                    print("  help                       Show this help message")
+                    print("  quit / exit / q            Exit the chatbot")
+                    
+                    print("\n💡 Examples:")
+                    print("  You: What is the installation process?")
+                    print("  You: list-docs")
+                    print("  You: view installation.html")
+                    print("  You: export installation.html")
+                    print("  You: export-all")
+                    print("=" * 70)
+                    continue
+                
+                # ============================================================
+                # COMMAND: LIST DOCUMENTS
+                # ============================================================
+                if question.lower() == 'list-docs':
+                    print("\n📄 LOADED DOCUMENTS")
+                    print("=" * 70)
+                    
+                    try:
+                        all_docs = chatbot.vectorstore.get()
+                        
+                        if not all_docs or not all_docs['metadatas']:
+                            print("No documents loaded.")
+                            continue
+                        
+                        # Group by filename
+                        files = {}
+                        for metadata in all_docs['metadatas']:
+                            if 'filename' in metadata:
+                                filename = metadata['filename']
+                                fmt = metadata.get('format', 'unknown')
+                                topic_type = metadata.get('topic_type', '')
+                                
+                                if filename not in files:
+                                    files[filename] = {
+                                        'format': fmt,
+                                        'topic_type': topic_type,
+                                        'chunks': 0
+                                    }
+                                files[filename]['chunks'] += 1
+                        
+                        # Display by format
+                        by_format = {}
+                        for filename, info in files.items():
+                            fmt = info['format']
+                            if fmt not in by_format:
+                                by_format[fmt] = []
+                            by_format[fmt].append((filename, info))
+                        
+                        for fmt in sorted(by_format.keys()):
+                            print(f"\n{fmt.upper()} Files:")
+                            for filename, info in sorted(by_format[fmt]):
+                                display = f"  • {filename}"
+                                if info['topic_type']:
+                                    display += f" ({info['topic_type']})"
+                                display += f" - {info['chunks']} chunk(s)"
+                                print(display)
+                        
+                        print(f"\n{'='*70}")
+                        print(f"Total: {len(files)} file(s), {len(all_docs['metadatas'])} chunk(s)")
+                        print("=" * 70)
+                        
+                        print("\n💡 Tip: Use 'view <filename>' to see the markdown")
+                        print("        Use 'export <filename>' to save to file")
+                        
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                        logger.exception("List documents failed")
+                    
+                    continue
+                
+                # ============================================================
+                # COMMAND: VIEW DOCUMENT
+                # ============================================================
+                if question.lower().startswith('view'):
+                    parts = question.split(maxsplit=1)
+                    
+                    if len(parts) < 2:
+                        print("\n❌ Usage: view <filename>")
+                        print("\nExamples:")
+                        print("  view installation.html")
+                        print("  view user_guide.dita")
+                        print("\n💡 Tip: Use 'list-docs' to see available files")
+                        continue
+                    
+                    filename = parts[1].strip()
+                    
+                    try:
+                        # Query vectorstore for this file
+                        results = chatbot.vectorstore.get(
+                            where={"filename": filename}
+                        )
+                        
+                        if not results or not results['documents']:
+                            print(f"\n❌ Document not found: {filename}")
+                            print("\n📄 Available documents:")
+                            
+                            # Show available files
+                            all_docs = chatbot.vectorstore.get()
+                            if all_docs and all_docs['metadatas']:
+                                files = sorted(set(
+                                    m['filename'] 
+                                    for m in all_docs['metadatas'] 
+                                    if 'filename' in m
+                                ))
+                                
+                                for i, f in enumerate(files[:15], 1):
+                                    print(f"  {i}. {f}")
+                                
+                                if len(files) > 15:
+                                    print(f"  ... and {len(files) - 15} more")
+                                    print("\n💡 Use 'list-docs' to see all files")
+                            continue
+                        
+                        # Display document info
+                        metadata = results['metadatas'][0]
+                        print(f"\n{'='*70}")
+                        print(f"📄 {filename}")
+                        print("=" * 70)
+                        print(f"Format:        {metadata.get('format', 'unknown').upper()}")
+                        print(f"Total chunks:  {len(results['documents'])}")
+                        
+                        if metadata.get('topic_type'):
+                            print(f"DITA type:     {metadata['topic_type']}")
+                        
+                        if metadata.get('total_pages'):
+                            print(f"Pages:         {metadata['total_pages']}")
+                        
+                        print("=" * 70)
+                        
+                        # Show first chunk
+                        print("\n📝 FIRST CHUNK (Preview):")
+                        print("-" * 70)
+                        
+                        first_chunk = results['documents'][0]
+                        preview_length = 800
+                        
+                        if len(first_chunk) <= preview_length:
+                            print(first_chunk)
+                        else:
+                            print(first_chunk[:preview_length])
+                            print(f"\n... [{len(first_chunk) - preview_length} more characters]")
+                        
+                        print("-" * 70)
+                        
+                        # Offer to show more
+                        if len(results['documents']) > 1:
+                            print(f"\n💡 This document has {len(results['documents'])} chunks")
+                            show_all = input("Show all chunks? [y/N]: ").strip().lower()
+                            
+                            if show_all in ('y', 'yes'):
+                                for i, chunk in enumerate(results['documents'], 1):
+                                    print(f"\n{'='*70}")
+                                    print(f"CHUNK {i} of {len(results['documents'])}")
+                                    print("=" * 70)
+                                    print(chunk)
+                                    
+                                    if i < len(results['documents']):
+                                        cont = input("\nContinue to next chunk? [Y/n]: ").strip().lower()
+                                        if cont in ('n', 'no'):
+                                            break
+                        
+                        # Offer to save
+                        print(f"\n{'='*70}")
+                        save = input("💾 Save to file? [y/N]: ").strip().lower()
+                        
+                        if save in ('y', 'yes'):
+                            # Create safe filename
+                            safe_name = filename.replace('.html', '').replace('.dita', '').replace('.htm', '')
+                            safe_name = re.sub(r'[^\w\-_]', '_', safe_name)
+                            output_file = f"markdown_{safe_name}.md"
+                            
+                            with open(output_file, 'w', encoding='utf-8') as f:
+                                # Write header
+                                f.write(f"# {filename}\n\n")
+                                f.write(f"**Format:** {metadata.get('format', 'unknown').upper()}\n")
+                                f.write(f"**Chunks:** {len(results['documents'])}\n")
+                                
+                                if metadata.get('topic_type'):
+                                    f.write(f"**Type:** {metadata['topic_type']}\n")
+                                
+                                f.write("\n---\n\n")
+                                
+                                # Write content
+                                if len(results['documents']) == 1:
+                                    # Single chunk - write directly
+                                    f.write(results['documents'][0])
+                                else:
+                                    # Multiple chunks - separate them
+                                    for i, chunk in enumerate(results['documents'], 1):
+                                        f.write(f"## Chunk {i} of {len(results['documents'])}\n\n")
+                                        f.write(chunk)
+                                        if i < len(results['documents']):
+                                            f.write("\n\n---\n\n")
+                            
+                            print(f"✅ Saved to: {output_file}")
+                        
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                        logger.exception("View document failed")
+                    
+                    continue
+                
+                # ============================================================
+                # COMMAND: EXPORT SPECIFIC DOCUMENT
+                # ============================================================
+                if question.lower().startswith('export ') and not question.lower().startswith('export-'):
+                    parts = question.split(maxsplit=1)
+                    
+                    if len(parts) < 2:
+                        print("\n❌ Usage: export <filename>")
+                        print("\nExamples:")
+                        print("  export installation.html")
+                        print("  export user_guide.dita")
+                        continue
+                    
+                    filename = parts[1].strip()
+                    
+                    try:
+                        # Query vectorstore
+                        results = chatbot.vectorstore.get(
+                            where={"filename": filename}
+                        )
+                        
+                        if not results or not results['documents']:
+                            print(f"\n❌ Document not found: {filename}")
+                            print("\n💡 Use 'list-docs' to see available files")
+                            continue
+                        
+                        # Create output directory
+                        output_dir = Path("./markdown_exports")
+                        output_dir.mkdir(exist_ok=True)
+                        
+                        # Create safe filename
+                        safe_name = filename.replace('.html', '').replace('.dita', '').replace('.htm', '')
+                        safe_name = re.sub(r'[^\w\-_]', '_', safe_name)
+                        output_file = output_dir / f"{safe_name}.md"
+                        
+                        # Get metadata
+                        metadata = results['metadatas'][0]
+                        
+                        # Write file
+                        with open(output_file, 'w', encoding='utf-8') as f:
+                            # Header
+                            f.write(f"# {filename}\n\n")
+                            f.write(f"**Format:** {metadata.get('format', 'unknown').upper()}\n")
+                            f.write(f"**Chunks:** {len(results['documents'])}\n")
+                            
+                            if metadata.get('topic_type'):
+                                f.write(f"**Type:** {metadata['topic_type']}\n")
+                            
+                            if metadata.get('total_pages'):
+                                f.write(f"**Pages:** {metadata['total_pages']}\n")
+                            
+                            if metadata.get('author'):
+                                f.write(f"**Author:** {metadata['author']}\n")
+                            
+                            if metadata.get('keywords'):
+                                f.write(f"**Keywords:** {metadata['keywords']}\n")
+                            
+                            f.write(f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write("\n---\n\n")
+                            
+                            # Content
+                            if len(results['documents']) == 1:
+                                f.write(results['documents'][0])
+                            else:
+                                for i, chunk in enumerate(results['documents'], 1):
+                                    f.write(f"## Chunk {i} of {len(results['documents'])}\n\n")
+                                    f.write(chunk)
+                                    if i < len(results['documents']):
+                                        f.write("\n\n---\n\n")
+                        
+                        print(f"\n✅ Exported successfully!")
+                        print(f"   File: {output_file}")
+                        print(f"   Size: {output_file.stat().st_size:,} bytes")
+                        print(f"   Chunks: {len(results['documents'])}")
+                        
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                        logger.exception("Export document failed")
+                    
+                    continue
+                
+                # ============================================================
+                # COMMAND: EXPORT ALL DOCUMENTS
+                # ============================================================
+                if question.lower() == 'export-all':
+                    print("\n📦 EXPORTING ALL DOCUMENTS")
+                    print("=" * 70)
+                    
+                    try:
+                        # Create output directory
+                        output_dir = Path("./markdown_exports")
+                        output_dir.mkdir(exist_ok=True)
+                        
+                        # Get all documents
+                        all_docs = chatbot.vectorstore.get()
+                        
+                        if not all_docs or not all_docs['documents']:
+                            print("❌ No documents to export")
+                            continue
+                        
+                        # Group by filename
+                        files = {}
+                        for i, (doc, metadata) in enumerate(zip(all_docs['documents'], all_docs['metadatas'])):
+                            filename = metadata.get('filename', f'unknown_{i}')
+                            
+                            if filename not in files:
+                                files[filename] = {
+                                    'chunks': [],
+                                    'metadata': metadata
+                                }
+                            
+                            files[filename]['chunks'].append(doc)
+                        
+                        print(f"Found {len(files)} document(s) to export\n")
+                        
+                        # Export each file
+                        exported = 0
+                        total_size = 0
+                        
+                        for filename, data in sorted(files.items()):
+                            # Create safe filename
+                            safe_name = filename.replace('.html', '').replace('.dita', '').replace('.htm', '')
+                            safe_name = re.sub(r'[^\w\-_]', '_', safe_name)
+                            output_file = output_dir / f"{safe_name}.md"
+                            
+                            # Write file
+                            with open(output_file, 'w', encoding='utf-8') as f:
+                                # Header
+                                f.write(f"# {filename}\n\n")
+                                f.write(f"**Format:** {data['metadata'].get('format', 'unknown').upper()}\n")
+                                f.write(f"**Chunks:** {len(data['chunks'])}\n")
+                                
+                                if data['metadata'].get('topic_type'):
+                                    f.write(f"**Type:** {data['metadata']['topic_type']}\n")
+                                
+                                if data['metadata'].get('author'):
+                                    f.write(f"**Author:** {data['metadata']['author']}\n")
+                                
+                                f.write(f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                                f.write("\n---\n\n")
+                                
+                                # Content
+                                if len(data['chunks']) == 1:
+                                    f.write(data['chunks'][0])
+                                else:
+                                    for i, chunk in enumerate(data['chunks'], 1):
+                                        f.write(f"## Chunk {i} of {len(data['chunks'])}\n\n")
+                                        f.write(chunk)
+                                        if i < len(data['chunks']):
+                                            f.write("\n\n---\n\n")
+                            
+                            file_size = output_file.stat().st_size
+                            total_size += file_size
+                            
+                            exported += 1
+                            print(f"  ✓ {filename}")
+                            print(f"    → {output_file.name} ({file_size:,} bytes)")
+                        
+                        print(f"\n{'='*70}")
+                        print(f"✅ Export complete!")
+                        print(f"   Files:      {exported}")
+                        print(f"   Location:   {output_dir.absolute()}")
+                        print(f"   Total size: {total_size:,} bytes")
+                        print("=" * 70)
+                        
+                    except Exception as e:
+                        print(f"❌ Error: {e}")
+                        logger.exception("Export all failed")
+                    
+                    continue
+                
+                # ============================================================
+                # COMMAND: CLEANUP
+                # ============================================================
+                if question.lower() == 'cleanup':
+                    comparison = ConfigurationComparison(chatbot.config)
+                    comparison.cleanup_old_databases()
+                    continue
+                
+                # ============================================================
+                # COMMAND: BATCH MODE
+                # ============================================================
+                if question.lower().startswith('batch'):
+                    parts = question.split(maxsplit=1)
+                    if len(parts) < 2:
+                        print("\n❌ Usage: batch <questions_file>")
+                        print("\nExample: batch questions.txt")
+                        continue
+                    
+                    questions_file = parts[1].strip()
+                    output = input("Output file (press Enter for auto): ").strip()
+                    
+                    runner = BatchQueryRunner(chatbot)
+                    runner.run_from_file(questions_file, output if output else None)
+                    continue
+                
+                # ============================================================
+                # COMMAND: COMPARE CONFIGURATIONS
+                # ============================================================
+                if question.lower().startswith('compare-configs'):
+                    parts = question.split(maxsplit=1)
+                    if len(parts) < 2:
+                        print("\n❌ Usage: compare-configs <questions_file>")
+                        continue
+                    
+                    questions_file = parts[1].strip()
+                    
+                    # Ask about cleanup
+                    print("\n🧹 Clean up old test databases first?")
+                    if input("Clean old databases? [Y/n]: ").strip().lower() in ('', 'y', 'yes'):
+                        comparison = ConfigurationComparison(chatbot.config)
+                        comparison.cleanup_old_databases()
+                    
+                    print("\nTest modes:")
+                    print("  1. Quick (3 configs: small/medium/large)")
+                    print("  2. Comprehensive (8 configs: sizes + overlaps)")
+                    print("  3. Size focused (7 sizes, fixed 20% overlap)")
+                    print("  4. Overlap focused (7 overlaps, fixed 1000 size)")
+                    print("  5. Matrix (12 configs: 3 sizes × 4 overlaps)")
+                    
+                    choice = input("\nChoice [1]: ").strip() or "1"
+                    
+                    mode_map = {
+                        "1": "quick",
+                        "2": "comprehensive",
+                        "3": "size_focused",
+                        "4": "overlap_focused",
+                        "5": "matrix"
+                    }
+                    
+                    test_mode = mode_map.get(choice, "quick")
+                    
+                    comparison = ConfigurationComparison(chatbot.config)
+                    comparison.run_comparison(questions_file, test_mode=test_mode)
+                    continue
+                
+                # ============================================================
+                # COMMAND: TEST SIZES
+                # ============================================================
+                if question.lower().startswith('test-sizes'):
+                    parts = question.split(maxsplit=1)
+                    if len(parts) < 2:
+                        print("\n❌ Usage: test-sizes <questions_file>")
+                        continue
+                    
+                    comparison = ConfigurationComparison(chatbot.config)
+                    comparison.run_comparison(parts[1].strip(), test_mode="size_focused")
+                    continue
+                
+                # ============================================================
+                # COMMAND: TEST OVERLAPS
+                # ============================================================
+                if question.lower().startswith('test-overlaps'):
+                    parts = question.split(maxsplit=1)
+                    if len(parts) < 2:
+                        print("\n❌ Usage: test-overlaps <questions_file>")
+                        continue
+                    
+                    comparison = ConfigurationComparison(chatbot.config)
+                    comparison.run_comparison(parts[1].strip(), test_mode="overlap_focused")
+                    continue
+                
+                # ============================================================
+                # COMMAND: TEST MATRIX
+                # ============================================================
+                if question.lower().startswith('test-matrix'):
+                    parts = question.split(maxsplit=1)
+                    if len(parts) < 2:
+                        print("\n❌ Usage: test-matrix <questions_file>")
+                        continue
+                    
+                    comparison = ConfigurationComparison(chatbot.config)
+                    comparison.run_comparison(parts[1].strip(), test_mode="matrix")
+                    continue
+                
+                # ============================================================
+                # COMMAND: LOG
+                # ============================================================
+                if question.lower() == 'log':
+                    print("\n📝 Session Logs:")
+                    print(f"  Text: {chatbot.session_logger.get_log_path()}")
+                    print(f"  JSON: {chatbot.session_logger.get_json_path()}")
+                    continue
+                
+                # ============================================================
+                # COMMAND: FORMATS
+                # ============================================================
+                if question.lower() == 'formats':
+                    print("\n📑 Loaded Document Formats:")
+                    for fmt_str, stats in chatbot.document_stats.items():
+                        if stats['count'] > 0:
+                            print(f"  {fmt_str}: {stats['success']}/{stats['count']} files loaded")
+                            if stats['failed'] > 0:
+                                print(f"    ({stats['failed']} failed)")
+                    continue
+                
+                # ============================================================
+                # COMMAND: STATS
+                # ============================================================
+                if question.lower() == 'stats':
+                    stats = chatbot.session_logger._get_statistics()
+                    if stats:
+                        print("\n📊 Session Statistics:")
+                        print(f"  Total queries: {stats.get('total_queries', 0)}")
+                        print(f"  Avg response time: {stats.get('avg_response_time', 0):.2f}s")
+                        print(f"  Fastest: {stats.get('min_response_time', 0):.2f}s")
+                        print(f"  Slowest: {stats.get('max_response_time', 0):.2f}s")
+                        print(f"  Avg sources used: {stats.get('avg_sources_used', 0):.1f}")
+                    else:
+                        print("\n📊 No queries yet in this session")
+                    continue
+                
+                # ============================================================
+                # REGULAR QUESTION PROCESSING
+                # ============================================================
+                print("\n⏳ Thinking...")
+                response = chatbot.query(question)
+                
+                if "error" in response:
+                    print(f"\n❌ Error: {response['error']}")
+                    continue
+                
+                print(f"\n🤖 Bot: {response['answer']}")
+                print(f"\n⏱️ Response time: {response['response_time']:.2f}s")
+                
+                if response.get('sources'):
+                    print(f"\n📚 Sources ({len(response['sources'])} chunks used):")
+                    print("=" * 70)
+                    
+                    for i, doc in enumerate(response['sources'][:5], 1):
+                        filename = doc.metadata.get('filename', 'Unknown')
+                        fmt = doc.metadata.get('format', 'unknown')
+                        page = doc.metadata.get('page_number')
+                        topic_type = doc.metadata.get('topic_type')
+                        
+                        # Source header
+                        source_info = f"\n[{i}] {filename} [{fmt.upper()}]"
+                        
+                        if page:
+                            source_info += f" (page {page})"
+                        
+                        if topic_type:
+                            source_info += f" ({topic_type})"
+                        
+                        print(source_info)
+                        print("-" * 70)
+                    
+                        # Display chunk text
+                        chunk_text = doc.page_content
+                        max_chunk_display = 300  # Show first 300 chars
+                        
+                        if len(chunk_text) <= max_chunk_display:
+                            print(chunk_text)
+                        else:
+                            print(chunk_text[:max_chunk_display])
+                            print(f"\n[... {len(chunk_text) - max_chunk_display} more characters ...]")
+                        
+                        print()
+                    
+                    if len(response['sources']) > 5:
+                        print(f"... and {len(response['sources']) - 5} more sources")
+                    
+                    print("=" * 70)
+            
+            except KeyboardInterrupt:
+                print("\n\n👋 Goodbye!")
+                break
+            except Exception as e:
+                print(f"\n❌ Error: {e}")
+                logger.exception("Error in interactive mode")
+    
+    finally:
+        print("\n📝 Finalizing session log...")
+        chatbot.finalize_session()
+        print(f"✅ Session log saved: {chatbot.session_logger.get_log_path()}")
+
+
+# ============================================================================
+# SECTION 11: MAIN ENTRY POINT
+# ============================================================================
+
+def main():
+    """Main entry point."""
+    try:
+        separator = "=" * 70
+        
+        print()
+        print(separator)
+        print("🤖 MULTI-FORMAT RAG CHATBOT v3.5")
+        print(separator)
+        print("✅ Enhanced DITA with Full Markdown Conversion")
+        print("✅ On-Demand Markdown Export")
+        print("✅ View/Export Individual or All Documents")
+        print("✅ Multi-Database Configuration Testing")
+        print(separator)
+        
+        config = UserConfiguration()
+        
+        if not config.interactive_setup():
+            print("\n❌ Configuration incomplete. Exiting.")
+            return 1
+        
+        print()
+        print(separator)
+        print("🚀 INITIALIZING CHATBOT")
+        print(separator)
+        
+        chatbot = InteractiveChatbot(config)
+        chatbot.initialize()
+        
+        print("\n✅ Initialization complete!")
+        
+        # Show document loading summary
+        print("\n📊 Document Loading Summary:")
+        for fmt_str, stats in chatbot.document_stats.items():
+            if stats['count'] > 0:
+                print(f"  {fmt_str}: {stats['success']}/{stats['count']} files loaded")
+                if stats['failed'] > 0:
+                    print(f"    ⚠️ {stats['failed']} failed")
+        
+        run_interactive_mode(chatbot)
+        
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\n\n👋 Interrupted by user")
+        return 0
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+```

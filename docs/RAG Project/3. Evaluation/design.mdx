@@ -1,0 +1,43 @@
+---
+sidebar_position: 1
+---
+
+# Evaluation Design
+Based on my knowledge of the RAG source material, I prepared a set of twelve questions, divided into four categories. The purpose of these categories is to define questions for which the main information required for a correct answer is found in, respectively, regular text, lists and tables. My reasoning was that this should expose the weaknesses of unstructured RAG source content.
+
+* Info in regular text
+    1. In a relationship map, what is the difference between map view and list view?
+    2. In a relationship map in Opportunity Manager, which tabs are available in the Contact Details panel?
+    3. Explain what the Team Relationships tab does in a relationship map’s Contact Details panel.
+    4. Is there a way of searching for a CEO contact so I can add them to my relationship map?
+
+* Info in lists
+
+    5. What is the second-highest level of relationship you can have with a contact on a relationship map.
+    6. What does it mean when a contact on a relationship map has an orange bar and circle?
+    7. How do I import a set of existing contacts into a relationship map?
+    8. On a relationship map, how can I rearrange the horizontal order of contacts below a particular manager?
+
+* Info in tables
+
+    9. Explain the Adaptability options in a relationship map’s Contact Details panel.
+    10. Explain what it means when a contact on a relationship map’s Political Status is “Political Structure”
+    11. Is a contact on a political map typically able to answer strategic questions if their Political Status is “Outside Political Structure”.
+    12. What are some typical defined standards used by someone who is designated as an “Evaluator” contact on your relationship map when they are evaluating the buying decision?
+
+
+I stored the questions in a plain text file, which I fed to the chatbot in batch mode. The chatbot then answered the questions in succession for chunks of 500 characters, 1000 characters, and 2000 characters. In each configuration, overlaps were 20% of chunk size.
+
+The chatbot’s answers were stored in the session log.
+
+I defined a scoring system for the chatbot’s answers. While there is a degree of subjectivity in assigning a score to each question, the definitions below were my guidelines. I imposed a high penalty for egregiously wrong answers to better expose instances in which the chatbot went badly off track.
+
+|   Score | Meaning                                                                                      |
+|--------:|:---------------------------------------------------------------------------------------------|
+|       5 | Excellent answer – Completeness excellent, accuracy excellent                                |
+|       4 | Very good answer – Completeness good, accuracy excellent, or vice versa.                     |
+|       3 | Good answer – Completeness good, accuracy good (small element of inaccuracy)                 |
+|       2 | OK answer – Completeness fair, accuracy fair – more than one incorrect detail.               |
+|       1 | Non-useful answer: Completeness poor, accuracy neutral owing to lack of useful info.         |
+|       0 | Bad answer – Completeness poor, accuracy poor – a mix of useless and misleading information. |
+|      -2 | Very bad answer – Completeness poor or worse; actively misleading or nonsensical.            |
