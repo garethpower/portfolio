@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkgp_portfolio=self.webpackChunkgp_portfolio||[]).push([["833"],{5513(e){e.exports=JSON.parse('{"title":"Recent posts","items":[]}')}}]);
