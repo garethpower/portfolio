@@ -1,0 +1,127 @@
+---
+sidebar_label: 'UX Analysis: Sales Playbook'
+sidebar_position: 8
+---
+
+import Admonition from '@theme/Admonition';
+
+# UX Analysis: Sales Playbook Manager
+
+The following is an analysis the UX design of part of Altify's Sales Playbook Manager.
+
+## UX Positives
+
+### Status of the sales cycle is always clear
+
+The **Playbook** tab has an effective layout. First you see a summary panel showing the overall status of the deal. Then you see a list of the relevant playbook stages. Each one has its status clearly represented, and full details are shown only if you choose.
+
+Suggestion: Reinforce the information structure of the tab by giving each part of it a title, such as the Summary and Stages titles shown in the mock-up below:
+
+![Sales Playbook Summary Screen](/img/playbook1.png)
+
+The sales cycle stages can be thought of as a reasonably sequential list, so perhaps they could be presented more explicitly as a sequence.
+
+One way would be simply to number the stages. Or maybe use an arrow symbol that points from one stage to the next.
+
+### Accelerators
+
+The clickable status icons are a  nice example of accelerators, enabling an expert user to set the status of a step without having to drill into the full details of the step, and the toggling mechanism means you can immediately undo what you’ve just done if necessary.
+
+### The app speaks the right language
+
+The words used in the UI speak the right language for the users (sales executives). There’s little evidence of inappropriate terminology held over from the development or design process, although I do cite one instance later.
+
+### Green-Amber-Red pattern
+
+The use of the green-amber-red pattern to indicate status is effective and visually efficient. You can see the status of each stage of the sales cycle at a glance.
+
+Perhaps this colour coding pattern could be used in additional locations, as indicated in the mock-up below:
+* the frame of the summary pane
+* the closing probability
+
+![Sales Playbook summary pane](/img/playbook2.png)
+
+## UX Negatives
+
+### ‘Projected to Close’ symbol
+
+The ‘Projected to Close’ symbol is a bit confusing. In the example shown below the thumbs-up seems to suggest that the deal is projected to close, but the fact that it's greyed out tends to undermine this messaging.
+
+Perhaps the green-amber-red pattern should be applied to this icon.
+
+Perhaps it should be a thumbs-down when the projection is negative.
+
+### Closure Probability
+
+The closure probability is presented as a number without full context.
+
+As a novice user, my initial assumption was that it signified progress along the sales cycle timeline, but that didn’t seem to match up with the time bar. A suitable label would help to make the meaning much clearer, as indicated in the mock-up below.
+
+![Closure probability](/img/playbook3.png)
+
+Another consideration is that the Closure Probability number seems to convey similar information to the Projected to Close icon. Should they be positioned together? 
+
+Maybe you could get a green thumbs-up icon beside the percentage value when it crosses the “projected to close” threshold, but you don’t see the icon otherwise? (This would probably obviate the need for the icon’s label too.)
+
+### Comments Panel
+
+The comments panel looks like a useful feature for when users need to make notes. It seems like it's positioned in the right place.
+
+However, there is a danger of the screen becoming bloated with untidy comment text added by the user, making it harder for them to scan the UI for the information they need.
+
+To mitigate this, I suggest adding a little more whitespace around the step text and the comments pane. This would make everything look tidier and help to keep steps distinct from each other.
+
+The readability of comment text might be improved too if the comment pane was narrower. It’s hard to read so far across the screen.
+
+![Comments panel](/img/playbook4.png)
+
+### ‘Tip’ Icon
+
+There seems to be some duplication of function between the ‘tip’ icon and the comments pane. It might be more efficient to have the tip text in the comments pane by default.
+
+The tips may place too much cognitive load on the user. A solid block of unformatted text like the one below is too hard to read on a screen. I think many users wouldn’t bother to make the effort. The translucency of the popup may also hinder easy reading.
+
+Furthermore, I suggest rewriting the tip text as follows:
+
+<Admonition type="note" title="BEFORE">
+Your "sweet spot" for your offering is meant to be used as a guideline to "qualify in" or "qualify out" of an opportunity. If the customer does not meet the "target profile" or "sweet spot" for your offering, you should not pursue the opportunity without approval. Understanding the "sweet spot" early in the process will help to ensure that you are working an opportunity you can win. Remember, for every unqualified deal that you work, there is a qualified deal that you are not working.
+</Admonition>
+
+<Admonition type="note" title="AFTER">
+The sweet spot is a guideline that qualifies in or out an opportunity. If the customer is not in the sweet spot, don't pursue the opportunity without approval. Understanding the sweet spot early in the process helps ensure that you spend your time on qualified opportunities you can win.
+</Admonition>
+
+![Tips](/img/playbook5.png)
+
+### Sales Process link
+
+The Sales Process link only looks clickable if you happen to hover over it. It should probably use the same visual clue as the Pause Date below it.
+
+![Sales Playbook Summary Screen](/img/playbook1.png)
+
+### CRM Close Date
+I don’t think “CRM Close Date” is the best way of expressing what that date is because it uses a term that is probably not familiar to many users (CRM). Maybe “Planned Close Date” instead?
+
+### Sales Cycle indicator
+
+For increased clarity, I think that the “Sales Cycle” label should say “Sales Cycle Health” or something to that effect. 
+
+And it is not obvious what the three triangles beside it mean. The colour coding provides a visual indicator of the sales cycle health, but the triangles are hard to understand.
+
+### ‘Expand’ Icons and Quicklink Icons
+
+The icon you click to expand a stage seems too similar to the Quicklink icon (which provides access to sales resources). They have different functions, yet both are small triangles of similar size, with the same blue colour involved in each case. I think the icon is best suited to the ‘expand’ action.
+
+![Comments panel](/img/playbook4.png)
+
+I don’t think the Quicklink icon is well suited to its purpose though. I think it’s too small. It’s too easily missed or ignored. And it doesn’t really convey much indication of what it’s for.
+
+So I think the Quicklink icon should be larger and more visually indicative of its purpose, and I think it should have a colour of its own, not used for anything else in the Playbook UI.
+
+Alternatively, maybe a textual link to the Quicklink resources would work better.
+
+### ‘Mandatory’ Icons
+
+I think the icon that signifies a mandatory step is confusing. To me, a triangle with an exclamation point would more typically indicate an alert message. 
+
+It might be better to use an asterisk icon instead, maybe with a little clue at the bottom of each stage, like “* = Mandatory”.

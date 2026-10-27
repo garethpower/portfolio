@@ -1,0 +1,98 @@
+---
+sidebar_label: 'Reference Topic: Timesheet Errors'
+sidebar_position: 7
+---
+
+# Timesheet Errors and Warnings
+
+The TagomiPay system carries out a series of checks on timesheet data.
+
+If it detects any abnormalities, it displays appropriate messages in the Timesheet Entry screen and in the employee's payslip.
+
+The Automatic Timesheets, Batch Timesheet Entry and Timesheet Import windows also display these messages.
+
+There are three types of timesheet message you may encounter:
+
+| Message Type | Icon | Definition |
+| --- | --- | --- |
+| Error Message | ![](/img/error.png) | A timesheet error messages signifies an issue serious enough for the system to prevent you from saving the timesheet until it is resolved. |
+| Warning message | ![](/img/warning.png) | A timesheet warning message signifies that the system has detected an issue you may need to address.<br />You can still save the timesheet. However, it may be advisable to address the cause of the warning first. |
+| Info Message | ![](/img/info.png) | Timesheet info messages are intended to provide you with information you may find useful.<br />You can still save the timesheet. These issues do NOT affect the validity of the timesheet. |
+
+<details>
+<summary>Timesheet Error Messages</summary>
+
+A timesheet with any of the following error messages cannot be saved until the error is resolved.
+
+| Error Message<br /><br />![](/img/error.png) | Meaning |
+| --- | --- |
+| Nett pay is a negative amount | The sum of the PAYE, PRSI and USC deductions (also PRD if applicable) in the current pay period are greater than the total payment values.<br /><br />As a result the net pay value is negative, and the timesheet cannot be saved. |
+| Disability pay exceeds normal pay | Payments of type **Paid Disability** are deducted from the main payment value.<br /> However, in this case the main payment value is lower than the Paid Disability value, and as a result the timesheet cannot be processed. |
+| Formula not set up correctly | A payment or deduction formula seems to contain invalid fields or values. |
+| Holiday payment not set | No holiday payment has been set up in the **Company Details - Holidays** tab.<br />Because of this, it is not possible to process holiday pay using the Holiday and Absence Tracking feature. |
+| PRSI code *XX* no longer valid | A PRSI code previously applied to the employee is no longer in the PRSI Table. |
+| Already paid up to period *X* | The employee has already been paid up to pay period X.<br />The most likely reason is that the employee has received holiday pay in advance. |
+| This employee has already left. | The employee was marked as a leaver in a previous pay period. |
+| PRSI code <u>XX</u> improperly defined | A PRSI code that applies to the employee has no rates or earning bands associated with it in the PRSI Table. |
+| Nett to Gross payment not set | The Net to Gross feature must reference a specific payment in the **Company Details - Misc** tab.<br />No payment is currently referenced there. |
+| Error calculating Payment <u>X</u> | A payment cannot be calculated, probably because a value referenced in an associated formula is not set in the current timesheet. |
+| Error calculating Deduction *X* | A deduction cannot be calculated, probably because a value referenced in an associated formula is not set in the current timesheet. |
+| Timesheet not calculated | Timesheet not calculated. |
+| No payments/refunds on timesheet | There are no payment values on the current timesheet, and no refunds are due. Therefore, the timesheet cannot be saved. |
+| Employee is suspended | The employee is currently suspended and cannot be paid in the current pay period. |
+| Employee holiday info missing | Holiday pay can't be processed for the employee because the information on the employee details record's **Holidays** tab is incomplete. |
+| EE holiday Hourly Rate not set | The payment associated with the '% of Hours Worked' accrual method references a specific Hourly Rate field.<br />The current employee has no rate value in that field. |
+| Year's USC a negative amount | The USC total for the tax year is a negative value.<br />Because of this, the timesheet cannot be saved.<br />The USC total was probably manually overridden. |
+| Timesheet data not imported | There was a problem with the Timesheet Import data for the specified employee.<br />As a result their timesheet has not been saved. |
+
+</details>
+
+<details>
+<summary>Timesheet Warning Messages</summary>
+
+A timesheet that has warnings associated with it can still be saved. However, it may be advisable to address the cause of the warning first.
+
+| Warning Message<br /><br />![](/img/warning.png) | Meaning |
+| --- | --- |
+| Tax refund paid this period | The employee is receiving a refund of previous tax deductions in the current pay period.<br />This usually occurs because of a change in the employee's tax allowances, or a reduction in their gross pay in the current period. |
+| Pens Contrib > X % of Gross Pay TD | The total pension / PRSA contributions for the current year are greater than the allowed percentage of the employee's annual gross pay.<br />(The allowed percentage is determined by the employee's age.) |
+| Employee Std Rate Cut-Off not set | The employee has not been assigned a Standard Rate Cut-Off value.<br />All of their Gross Pay will be subject to tax at the higher tax rate. |
+| Nett to Gross EE can't have Nett BIK | The employee is being paid on a Nett to Gross basis.<br />However, there is also a Nett BIK payment on the current timesheet.<br />Nett BIK cannot be processed for employees paid on a Nett to Gross basis. |
+| EE maximum Nett Pay exceeded | The employee's Nett Pay in the current pay period exceeds the maximum value specified on the Employee Details record or in the Company/Payroll Details record. |
+| Nett Pay below EE minimum | The employee's Nett Pay in the current pay period is lower than the minimum value specified in the Employee Details record or in the Company/Payroll Details record. |
+| Ins.Weeks TP reduced to 0 | There are no payment values on the current timesheet.<br />Because of this the employee's number of insurable weeks is set to zero in the current pay period. |
+| Reducing deduction exceeded balance | The balance for a deduction set up with the 'Reducing' balance type has been exceeded. |
+| Zero Pay | There are no payment values and no refunds due on the current timesheet. |
+| Rate(s) below JLC Rate of x.xx | One or more payment rates on the current timesheet is below the recommended JLC rate for the employee. |
+| PRD refund not calc. | A recalculation of the current employees PRD contributions is not possible.<br />This is usually due to the employee not having the full 52 insurable weeks in their current employment. |
+| Nett to Gross value estimated | The system had to estimate the employees Nett to Gross payment amount.<br />Other payments are affecting the Nett to Gross calculation. |
+| No table cut-off specified | There is no Standard Rate Cut-Off Amount specified for the employee. |
+| Cannot recalc EOY Health Levy | This warning message applies to 2010 payrolls only. Budget 2011 abolished the Health Levy.<br />It applies to the following cases:<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period."<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but a PRSI override was carried out in one or more previous pay periods in the tax year.<br />The Health Levy recalculation cannot be carried out for the employee when this is the case.<br />The Control Summary will include the following additional information:<br />"The system has determined that in one or more previous pay periods PRSI totals may have be overridden."<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but the employee was set up in the system during the year through the Mid-Year Employee Setup process.<br />The Health Levy recalculation cannot be carried out for the employee when this is the case.<br />The Control Summary will include the following additional information:<br />"A mid-year setup was completed for this employee."
+| Cannot recalc EOY Income Levy | This message is displayed when you save a timesheet with the **Income Levy** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period." |
+| Cannot recalc EOY PRD | This error is displayed when you save a timesheet with the **PRD** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period." |
+
+</details>
+
+<details>
+<summary>Timesheet Info Messages</summary>
+
+Timesheet info messages are intended to provide you with information you may find useful. These are issues that do NOT affect the validity of the timesheet.
+
+| Info Message<br />![](/img/info.png) | Meaning |
+| --- | --- |
+| Employee PPS no. not set | The Employee Details record contains no PPS number.<br />Without this number the employee's tax may be calculated at the higher rate. |
+| Starting in this period | The employee is starting in this employment in the current pay period. |
+| PRSI rate locked to base code | The employee's PRSI is locked to their current PRSI base code.<br />All PRSI deductions will be calculated at the base code, regardless of their PRSIable pay amount for the current pay period.<br />This setting should only be selected when recommended by the Dept of Social Protection. |
+| Multiple Employments | This employee has multiple employments.<br />This precludes any entitlement to PRSI allowances for this employment. |
+| Leaving this Period | A finish date and a finish period (the current period) has been entered for the employee on the timesheet, or in the Employee Details window. |
+| PAYE value overridden | The user has adjusted the PAYE value on the current timesheet using the PAYE Override functionality. |
+| Employee PRSI overridden | The user has adjusted the Employee PRSI value on the current timesheet using the PRSI Override functionality. |
+| Employer PRSI overridden | The user has adjusted the Employer PRSI value on the current timesheet using the PRSI Override functionality. |
+| Negative Employee PRSI | The Employee PRSI is showing a negative value in the current pay period.<br /><br />This usually occurs as a result of an Employee PRSI override |
+| Negative Employer PRSI | The Employer PRSI is showing a negative value in the current pay period.<br /><br />This usually occurs as a result of an Employer PRSI override |
+| Starting and leaving this period | The employee is starting in this employment in the current pay period, and will also be leaving this employment in the current pay period. |
+| Employee suspended this period. | The employee has been flagged to be suspended from the current pay period.<br />If you need to pay them in this period, you must undo the suspension. |
+| On holidays to period X | The employee is being paid up until Period X in this timesheet.<br />The Timesheet Entry screen will not subsequently make the employee available for processing until Period X+1. |
+
+</details>
+
