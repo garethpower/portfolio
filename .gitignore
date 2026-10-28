@@ -18,3 +18,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Vale packages (downloaded by `vale sync`)
+/.github/styles/*
+!/.github/styles/config/

@@ -9,9 +9,31 @@ permissions:
   contents: write
 
 jobs:
+  vale:
+    name: Lint docs with Vale
+    runs-on: ubuntu-latest
+    env:
+      VALE_VERSION: 3.23.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Vale
+        run: |
+          curl -sSL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" | tar -xz -C "$RUNNER_TEMP" vale
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Download Vale styles
+        run: vale sync
+
+      # Fails on error-level alerts only; run `vale docs` locally for warnings and suggestions.
+      - name: Run Vale
+        run: vale --minAlertLevel=error docs
+
   deploy:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
+    needs: vale
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
