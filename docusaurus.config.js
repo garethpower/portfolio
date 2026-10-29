@@ -71,7 +71,24 @@ const config = {
           customCss: './src/css/custom.css',
         },
       }),
+      
     ],
+    [
+      'redocusaurus',
+      {
+        specs: [
+          {
+            id: 'tagomi-commerce',
+            spec: 'openapi/openapi-sample.yaml',
+            route: '/api/tagomi-commerce/',
+          },
+        ],
+        theme: {
+          primaryColor: '#0a7cff',
+        },
+      },
+  ],
+
   ],
 
   themeConfig:
