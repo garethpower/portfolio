@@ -11,7 +11,7 @@ If it detects any abnormalities, it displays appropriate messages in the Timeshe
 
 The Automatic Timesheets, Batch Timesheet Entry and Timesheet Import windows also display these messages.
 
-There are three types of timesheet message you may encounter:
+You may encounter three types of timesheet message:
 
 | Message Type | Icon | Definition |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ A timesheet with any of the following error messages cannot be saved until the e
 | Error calculating Payment <u>X</u> | A payment cannot be calculated, probably because a value referenced in an associated formula is not set in the current timesheet. |
 | Error calculating Deduction *X* | A deduction cannot be calculated, probably because a value referenced in an associated formula is not set in the current timesheet. |
 | Timesheet not calculated | Timesheet not calculated. |
-| No payments/refunds on timesheet | There are no payment values on the current timesheet, and no refunds are due. Therefore, the timesheet cannot be saved. |
+| No payments/refunds on timesheet | The current timesheet has no payment values, and no refunds are due. Therefore, the timesheet cannot be saved. |
 | Employee is suspended | The employee is currently suspended and cannot be paid in the current pay period. |
 | Employee holiday info missing | Holiday pay can't be processed for the employee because the information on the employee details record's **Holidays** tab is incomplete. |
 | EE holiday Hourly Rate not set | The payment associated with the '% of Hours Worked' accrual method references a specific Hourly Rate field.<br />The current employee has no rate value in that field. |
@@ -60,13 +60,13 @@ A timesheet that has warnings associated with it can still be saved. However, it
 | Nett to Gross EE can't have Nett BIK | The employee is being paid on a Nett to Gross basis.<br />However, there is also a Nett BIK payment on the current timesheet.<br />Nett BIK cannot be processed for employees paid on a Nett to Gross basis. |
 | EE maximum Nett Pay exceeded | The employee's Nett Pay in the current pay period exceeds the maximum value specified on the Employee Details record or in the Company/Payroll Details record. |
 | Nett Pay below EE minimum | The employee's Nett Pay in the current pay period is lower than the minimum value specified in the Employee Details record or in the Company/Payroll Details record. |
-| Ins.Weeks TP reduced to 0 | There are no payment values on the current timesheet.<br />Because of this the employee's number of insurable weeks is set to zero in the current pay period. |
+| Ins. Weeks TP reduced to 0 | The current timesheet has no payment values. Because of this the employee's number of insurable weeks is set to zero in the current pay period. |
 | Reducing deduction exceeded balance | The balance for a deduction set up with the 'Reducing' balance type has been exceeded. |
-| Zero Pay | There are no payment values and no refunds due on the current timesheet. |
-| Rate(s) below JLC Rate of x.xx | One or more payment rates on the current timesheet is below the recommended JLC rate for the employee. |
+| Zero Pay | The current timesheet has no payment values and no refunds due. |
+| Rates below JLC Rate of x.xx | One or more payment rates on the current timesheet is below the recommended JLC rate for the employee. |
 | PRD refund not calc. | A recalculation of the current employees PRD contributions is not possible.<br />This is usually due to the employee not having the full 52 insurable weeks in their current employment. |
 | Nett to Gross value estimated | The system had to estimate the employees Nett to Gross payment amount.<br />Other payments are affecting the Nett to Gross calculation. |
-| No table cut-off specified | There is no Standard Rate Cut-Off Amount specified for the employee. |
+| No table cut-off specified | The employee has no Standard Rate Cut-Off Amount. |
 | Cannot recalc EOY Health Levy | This warning message applies to 2010 payrolls only. Budget 2011 abolished the Health Levy.<br />It applies to the following cases:<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period."<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but a PRSI override was carried out in one or more previous pay periods in the tax year.<br />The Health Levy recalculation cannot be carried out for the employee when this is the case.<br />The Control Summary will include the following additional information:<br />"The system has determined that in one or more previous pay periods PRSI totals may have be overridden."<br />• When you save a timesheet with the **Health Levy** recalculation checkbox selected, but the employee was set up in the system during the year through the Mid-Year Employee Setup process.<br />The Health Levy recalculation cannot be carried out for the employee when this is the case.<br />The Control Summary will include the following additional information:<br />"A mid-year setup was completed for this employee."
 | Cannot recalc EOY Income Levy | This message is displayed when you save a timesheet with the **Income Levy** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period." |
 | Cannot recalc EOY PRD | This error is displayed when you save a timesheet with the **PRD** recalculation checkbox selected, but a PRSI Override has been carried out in the current period.<br />The recalculation cannot be carried out in this pay period for the employee when this is the case.<br />However, if there is a subsequent pay period in the tax year, the system will attempt to carry out the recalculation again in that period.<br />The Control Summary will include the following additional information:<br />"PRSI has been overridden this period." |
