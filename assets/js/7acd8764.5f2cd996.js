@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkgp_portfolio=self.webpackChunkgp_portfolio||[]).push([["288"],{5095(e){e.exports=JSON.parse('{"name":"docusaurus-plugin-redoc","id":"tagomi-commerce"}')}}]);
