@@ -27,3 +27,4 @@ calc
 PDF's
 PDF’s
 Tagomi
+Docusaurus

@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# How RAG Works
+# How RAG works
 
 A RAG system makes use of two language models:
 * **Embedding model**: This model has two purposes: 
@@ -14,7 +14,7 @@ The RAG system’s operation has two main phases:
 * Indexing phase (initial setup)
 * Query phase (when users ask questions)
 
-## Indexing Phase
+## Indexing phase
 This is the initial setup phase, in which the RAG system converts the specialised knowledge into a vector database so that it is ready for use to contextualise questions for the chatbot.
 
 The RAG system used in this project carries out the indexing phase as follows:
@@ -26,7 +26,7 @@ The RAG system used in this project carries out the indexing phase as follows:
 
 ![RAG indexing phase flow diagram](/img/rag-indexing.png)
  
-## Query Phase
+## Query phase
 This is the phase in which users ask the chatbot questions.
 1.	The embedding model converts the user’s question to vectors.
 2.	The RAG system searches for similar vectors in the vector database (using cosine similarity).

@@ -3,11 +3,11 @@ sidebar_label: 'UX Analysis: Data Visualisation'
 sidebar_position: 4
 ---
 
-# UX Analysis of a Data Visualisation
+# UX analysis of a data visualisation
 
 During my Fundamentals of AI certificate course, I wrote this UX analysis of an OECD data visualisation.
 
-## OECD OURdata Index
+## OECD OURdata index
 
 The OECD Open Useful Reusable Data (OURdata) Index is a measure of the quality of open-government data policies and practices across OECD countries. It is made up of three sub-indices: Data Availability, Data Accessibility and Government Support for Data Reuse. Each of these indices makes up one third of a country’s overall OURdata score.
 
@@ -31,7 +31,7 @@ In addition, the circle shape serves two purposes, as it represents both the Gov
 
 It is possible to discern how the 2017 and 2019 scores compare for each country, but it is not the first thing that the user sees. The 2019 data has strong visual emphasis. By studying the positions of shapes in relation to the stacked bars, the reader can see roughly how scores have changed, but this requires more focus and cognitive load than should be necessary. For a chart whose title indicates that it is a comparison of 2017 and 2019, it is not well designed.
 
-### Data-Ink Ratio
+### Data-ink ratio
 
 The chart could benefit from some simplification. The grid contributes little to the clarity of the chart, and could be replaced with a plain white background. 
 
@@ -49,19 +49,19 @@ This chart is intended for any reader interested in Open Government progress, so
 
 The chart has a well-defined focus: comparison of 2017 and 2019 OURdata indices. It does not represent this comparison as well as it should, but the question itself is well chosen.
 
-### Chart Type
+### Chart type
 
 A stacked bar chart is a good choice to represent the OURdata indices. Combining this with shapes more suitable for a scatter chart is not a good choice. It would be better to turn it into a clustered stacked chart so that 2017 and 2019 data are both represented in the same way, allowing for direct comparison.
 
-### Colour Choice
+### Colour choice
 
 The use of a categorical colour palette for the stacked bars is appropriate, as it allows for clear comparison. The palette itself seems appropriate, as there is a clear contrast between the colours, and the colours themselves do not seem like they would be problematic for people with colour blindness.
 
-## Redesign 1: Clustered Stacked Bar Chart
+## Redesign 1: Clustered stacked bar chart
 
 ![OECD OURData Index](/img/data-vis-2.png)
 
-### Visual Encodings
+### Visual encodings
 
 As described above, the original chart combined two different visual encodings to represent the same type of information (2017 and 2019), leading to a confusing picture in which the chart demanded focused attention to discern the answer to the question it focused on.
 
@@ -71,7 +71,7 @@ The subcategories are distinguished by colour.
 
 The individual scores are shown on the bars, and an explanatory subtitle makes clear how the overall score is calculated.
 
-### Data-Ink Ratio
+### Data-ink ratio
 
 The redesign has no horizontal axis or gridlines because the scores are shown on each bar.
 
@@ -87,16 +87,16 @@ This chart is intended for any reader interested in Open Government progress, so
 
 The chart asks the same question as the original by comparing of 2017 and 2019 OURdata indices per country. In this redesigned version, the question is answered more directly, providing a direct visual comparison for each country.
 
-### Chart Type
+### Chart type
 
 The redesign is a clustered stacked bar chart, clustering by year. This provides a direct comparison between 2017 and 2019 for each individual country’s scores. A single type of visual encoding represents each country’s scores per year.
 
-### Colour Choice
+### Colour choice
 
 The redesigned chart uses a palette that facilitates colour-blind readers. Colours of somewhat contrasting luminance were chosen to be doubly sure, while attempting to avoid differences that might seem to indicate relative importance of different subcategories.
 
 
-## Redesign 2: Map Chart
+## Redesign 2: Map chart
 
 ![OECD OURData Index](/img/data-vis-3.png)
 
@@ -104,13 +104,13 @@ This alternative way of presenting the 2017 and 2019 OURdata information changes
 
 Because the OECD countries are spread across the world, the visualisation is presented as a dashboard with four separate maps showing the regions for which data is available. 
 
-### Visual Encodings
+### Visual encodings
 
 Here, the primary visual encoding is colour, using a diverging palette to indicate the 2019 OURdata score for each country. A colour blindness-friendly blue-orange range is used. Blue indicates a higher score, and orange indicates a lower score. One possible drawback of this is that a colour range good at indicating relative scores, but less so at indicating absolute scores.
 
 The map itself might also be considered a visual encoding (shape). It provides a way of directly accessing information relating to a specific country. It is highly amenable to the reader’s visual fixation, because the eye naturally scans from country to country.
 
-### Data-Ink Ratio
+### Data-ink ratio
 
 The dashboard has an acceptable data-ink ratio. The country categories are immediately clear without the use of text. The title and subtitle give a quick description of the chart and how it functions.
 
@@ -124,11 +124,11 @@ This chart is intended for any reader interested in Open Government progress, so
 
 The chart has a slightly different focus from the original version. Its immediate message is relative 2019 scores across the OECD. However, the question that was answered by the original version is also answered here through the breakdown shown in the tooltips. 
 
-### Chart Type
+### Chart type
 
 The map format exploits the fact that the original dataset relates directly to geospatial references. The OURdata scores are placed over on the geospatial layer to indicate relative scores per country and provide an interactive way to access the 2017-2019 comparison. 
 
-### Colour Choice
+### Colour choice
 
 The blue-orange diverging palette was chosen to strike a balance between facilitating readers with colour blindness and providing intuitive colour coding to flag countries with good and bad scores. As orange is red-adjacent, it can be intuitively interpreted as a warning signal for low scores.
 

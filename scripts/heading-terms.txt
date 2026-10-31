@@ -1,0 +1,14 @@
+# Names that sentence_case_headings.py keeps capitalised in headings.
+# One per line; matching ignores case, and the spelling here is what's written.
+# Acronyms and words like TeamView or P35 are kept automatically.
+Gareth Power
+Tagomi Commerce
+Python
+Altify
+Help Centre
+Sales Playbook Manager
+Projected to Close
+Green-Amber-Red
+Sales Process
+Sales Cycle
+CRM Close Date

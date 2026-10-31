@@ -10,15 +10,15 @@ This chart visually represents the average scores across the configurations that
 
 ![Figure 1](/img/chart1.png)
 
-## Numbers of Bad Answers
+## Numbers of bad answers
 
-Scores of -2 are where egregiously bad answers occurred. In general, the RAG system had most trouble with questions targeting information contained in lists. One might have expected that it would have encountered as much difficulty, if not more, with questions targeting information in tables, but the scores do not bear this out. This may be because these the tables used in this study are relatively simple in layout.
+Scores of–2 are where egregiously bad answers occurred. In general, the RAG system had most trouble with questions targeting information contained in lists. One might have expected that it would have encountered as much difficulty, if not more, with questions targeting information in tables, but the scores do not bear this out. This may be because these the tables used in this study are relatively simple in layout.
 
 The smallest number of bad answers occurred where DITA was the source format, and the second-smallest number occurred for Plain Text source format. Next was PDF.
 
 By far the worst performer for bad answers was HTML, and its bad answers were predominantly on questions targeting information in lists and tables.
 
-## Numbers of Excellent Answers
+## Numbers of excellent answers
 
 Plain text source was associated with the highest number of excellent answers (a score of 5), although DITA source was associated with almost as many, and overall produced more high scores than Plain Text. 
 
@@ -28,16 +28,16 @@ Despite its overall poor showing, HTML source was also associated with a high nu
 
 Although HTML source was associated overall with poor results, this was because of the highly polarized nature of the quality of the answers. HTML source produced large numbers of both excellent and very bad answers, with few answers of middling quality.
 
-## Overall Average Answer Scores
+## Overall average answer scores
 
 Overall average answer scores were highest for DITA source, followed by Plain Text. PDF source was next. HTML average scores were slightly worse than those of PDF. 
 There was a more even spread of answer scores for PDF compared to HTML.
 
-## Effect of Chunk/Overlap Size
+## Effect of chunk/overlap size
 
 There was little indication that varying the chunk/overlap size affected the performance of the RAG system, except in the case of PDF. But even in this case a smaller chunk size that was associated with a higher score average. It seems likely that this is not a real effect, as smaller chunk sizes are generally associated with poorer context.
 
-## Breakdown per Question Type
+## Breakdown per question type
 
 The questions answered by the chatbot are organised into three categories:
 * Targeting information in regular text
@@ -62,13 +62,13 @@ For questions targeting information in regular text, HTML also performs strongly
 
 For questions targeting information in lists and tables, plain text source performs roughly as well as DITA source. HTML source performs particularly poorly in these cases.
 
-## HTML is the Poorest Performer
+## HTML is the poorest performer
 
 HTML performs very poorly in this study for questions targeting information in lists and tables. This is a surprising finding, because HTML’s structuredness compared to plain text and PDF ought to make it a superior source format.
 
 In the light of HTML’s surprisingly poor performance as a source format, it makes sense to look more closely at how the chatbot went wrong.
 
-## Analysis of a Wrong Answer
+## Analysis of a wrong answer
 
 The following is an extract from the chatbot session log:
 
@@ -177,7 +177,7 @@ After the page was chunked, the “Evaluator” chunk is 399 characters long, an
 
 These two chunks are the crucial chunks for answering question 12, and the RAG system failed to recognise that the second chunk was relevant to the answer. Had these been a single chunk, or had there been an overlap between them, there might have been enough context available for the second chunk to be included, and the chatbot might have generated a correct answer.
 
-## Splitting Algorithm for HTML and DITA
+## Splitting algorithm for HTML and DITA
 
 The manner in which the crucial HTML content was split led to question 12 being answered extremely poorly. For this reason, we need to look more closely at how the splitting algorithm—```RecursiveCharacterTextSplitter```—for HTML and DITA operates.
 

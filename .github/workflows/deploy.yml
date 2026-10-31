@@ -30,6 +30,26 @@ jobs:
       - name: Run Vale
         run: vale --minAlertLevel=error docs
 
+  links:
+    name: Check external links with Lychee
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Internal links are already checked by the Docusaurus build (onBrokenLinks: 'throw'),
+      # so only http(s) links are checked here. 429 (rate limited) counts as OK.
+      - name: Run Lychee
+        uses: lycheeverse/lychee-action@v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --scheme https --scheme http
+            --max-retries 3
+            --accept '100..=103,200..=299,429'
+            './docs/**/*.md' './docs/**/*.mdx' './src/**/*.js'
+          fail: true
+
   deploy:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
