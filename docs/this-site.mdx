@@ -7,7 +7,7 @@ sidebar_position: 2
 
 This site runs as a [Docusaurus](https://docusaurus.io/) project hosted on [GitHub](https://github.com/garethpower/portfolio).
 
-Each push to triggers a **deploy.yml** script on GitHub Actions containing the following jobs:
+Each push triggers a **deploy.yml** script on GitHub Actions containing the following jobs:
 * the [Vale](https://docs.vale.sh/) linter reviews the content for issues defined in its rule set
 * Lychee checks the validity of external links
 * the project builds and deploys to GitHub Pages
@@ -16,8 +16,6 @@ In my setup, Vale is configured to enforce Microsoft styles and [write-good](htt
 
 Vale also runs locally in my code editor, so I see its errors and warnings in real time too.
 
-(Vale is a rather strict system, and I don't always agree with its suggestions.)
-
 The sample API specification page on this site is generated from YAML by the "redocusaurus" Redoc plugin.
 
-I find Claude Code to be a very useful assistant. It saves a good deal of time with tasks such as configuration, automation, and bulk changes.
+Claude Code saves me a good deal of time with tasks such as configuration, automation, and bulk changes.
